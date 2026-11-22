@@ -30,7 +30,9 @@
 
 - Use native USB-C as device and PIO USB as host. The owner plans to power the
   board via a power-only port on the existing seven-data-port hub, or via a laptop
-  for testing. Hub VBUS, topology and pinout still need bench confirmation.
+  for testing. A photo or description of the computer end of the hub's data
+  cable will identify the adapter connector. The hardware team still needs to
+  verify upstream VBUS, backfeed and USB 2.0 hub topology on the bench.
 - The SDK's TinyUSB pin has a MIDI device class but lacks a MIDI host class.
   Evaluate [TinyUSB 0.19.0](https://github.com/hathach/tinyusb/releases/tag/0.19.0)
   or a later pin with the upstream MIDI 1.0 host driver before writing a driver.
@@ -38,10 +40,8 @@
 - Prefer USB MIDI event packets and distinct logical ports per interface and
   cable. Define SysEx serialization when multiple sources share an output and
   exercise stalled-output overflow, disconnect and address reuse in native tests.
-- This session hides the real `.git` and `.codex` under read-only mounts.
-  The GitHub connector could not see `nevynit/rpico-bridge` and has no repository
-  creation tool. The shell cannot resolve GitHub. The complete foundation changes,
-  including the agent TOMLs, are staged in `build/rpico-bridge-foundation.patch`.
+- The foundation includes five specialist agent definitions and the pico-dev
+  environment. The GitHub remote is `https://github.com/NevynIt/rpico-bridge`.
 - Open acceptance items include native MIDI + CDC enumeration, dual USB operation,
   multi-device hub enumeration, routing and latency, reconnect, standalone power
   and soak on actual hardware. The container has no USB device node. Wokwi's
@@ -49,8 +49,7 @@
 
 ## Next three tasks
 
-1. Apply and push the foundation from an authenticated, writable checkout.
-2. Build the native MIDI 1.0 + CDC interface and verify a pinned MIDI host
+1. Build the native MIDI 1.0 + CDC interface and verify a pinned MIDI host
    dependency with the PIO host. Confirm the hub's topology and safe VBUS feed.
-3. Implement bounded, transport-independent routing and native tests for fan-out,
+2. Implement bounded, transport-independent routing and native tests for fan-out,
    no self-echo, virtual cables, SysEx/realtime, backpressure and reconnect.

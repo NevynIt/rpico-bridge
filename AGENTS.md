@@ -56,5 +56,5 @@ routing tests. See `docs/STATE.md` for the current verification and blockers.
 Read this file and `docs/STATE.md`, then run `git status --short --branch` and
 `git log -5 --oneline`. Pick the next useful task from the snapshot and start it.
 After meaningful work, run relevant checks and replace outdated state in
-`docs/STATE.md`. Commit and push completed, validated changes to the private
+`docs/STATE.md`. Commit and push completed, validated changes to the public
 `nevynit/rpico-bridge` repository. Preserve shared history.

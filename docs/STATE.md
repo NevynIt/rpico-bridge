@@ -1,6 +1,7 @@
 # Project state
 
-**Milestone 1 — Foundation.** Source, build, agent definitions and operating notes are prepared. Applying the staged agent files and publishing the private repository remain open.
+**Milestone 2 — USB architecture.** The foundation, five agent definitions and
+development container are on the public `nevynit/rpico-bridge` repository.
 
 ## Build evidence
 
@@ -40,8 +41,6 @@
 - Prefer USB MIDI event packets and distinct logical ports per interface and
   cable. Define SysEx serialization when multiple sources share an output and
   exercise stalled-output overflow, disconnect and address reuse in native tests.
-- The foundation includes five specialist agent definitions and the pico-dev
-  environment. The GitHub remote is `https://github.com/NevynIt/rpico-bridge`.
 - Open acceptance items include native MIDI + CDC enumeration, dual USB operation,
   multi-device hub enumeration, routing and latency, reconnect, standalone power
   and soak on actual hardware. The container has no USB device node. Wokwi's
@@ -53,3 +52,5 @@
    dependency with the PIO host. Confirm the hub's topology and safe VBUS feed.
 2. Implement bounded, transport-independent routing and native tests for fan-out,
    no self-echo, virtual cables, SysEx/realtime, backpressure and reconnect.
+3. Verify the native interface, powered hub enumeration and MIDI transport on
+   the RP2040-Zero.

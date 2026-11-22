@@ -44,6 +44,8 @@ Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may u
 
 For Windows enumeration tests, leave the device attached to Windows. To test from the container instead, use WSL 2 USB/IP and confirm that Docker's Linux daemon can see the USB device node. Recheck the mapping after switching between BOOTSEL and application mode. [Microsoft WSL USB guide](https://learn.microsoft.com/en-us/windows/wsl/connect-usb)
 
+If Windows Explorer cannot see `RPI-RP2` because the board is attached to WSL, run `usbipd list` in Windows PowerShell. Use the Pico's Windows bus ID in `usbipd detach --busid <BUSID>`. This returns the device to Windows so Explorer can mount the BOOTSEL drive. [Microsoft WSL USB guide](https://learn.microsoft.com/en-us/windows/wsl/connect-usb)
+
 The optional Compose service gives the container access to one Linux USB device node. Set `PICO_USB_DEVICE` to that node and `PICO_USB_GID` to its numeric group on the Docker daemon side.
 
 ```sh

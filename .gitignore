@@ -1,0 +1,14 @@
+/.codex/
+/.config/gh/
+auth.json
+hosts.yml
+.env
+.env.*
+!.env.example
+/build/
+/build-*/
+/cmake-build-*/
+/CMakeUserPresets.json
+/compile_commands.json
+__pycache__/
+/.venv/

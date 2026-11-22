@@ -1,0 +1,17 @@
+services:
+  usb:
+    image: pico-dev:latest
+    user: pico
+    init: true
+    privileged: false
+    working_dir: /workspace
+    devices:
+      - "${PICO_USB_DEVICE:?Set PICO_USB_DEVICE to the Linux USB device node}:${PICO_USB_DEVICE}:rw"
+    group_add:
+      - "${PICO_USB_GID:?Set PICO_USB_GID to the device numeric group ID}"
+    volumes:
+      - type: bind
+        source: ..
+        target: /workspace
+        read_only: true
+    command: ["lsusb"]

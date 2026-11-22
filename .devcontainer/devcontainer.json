@@ -1,0 +1,27 @@
+{
+  "name": "pico-dev",
+  "image": "pico-dev:latest",
+  "containerUser": "pico",
+  "remoteUser": "pico",
+  "updateRemoteUserUID": false,
+  "init": true,
+  "privileged": false,
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges=true",
+    "--security-opt=seccomp=unconfined"
+  ],
+  "mounts": [
+    "type=volume,source=pico-dev-codex,target=/home/pico/.codex",
+    "type=volume,source=pico-dev-gh,target=/home/pico/.config/gh"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-vscode.cpptools", "ms-vscode.cmake-tools"],
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "cmake.generator": "Ninja"
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+model = "gpt-6.2-sol"
+model_reasoning_effort = "high"
+cli_auth_credentials_store = "file"
+
+[agents]
+default_subagent_model = "gpt-6-luna"

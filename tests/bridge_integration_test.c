@@ -114,11 +114,45 @@ static void test_write_backpressure_and_reconnect(void)
     CHECK(!usb_mock_pop_output(1, packet));
 }
 
+static void test_bridge_ordered_policy(void)
+{
+    usb_mock_reset();
+    usb_mock_set_endpoint(0, 1, 1, 1);
+    usb_mock_set_endpoint(1, 1, 1, 1);
+    usb_mock_set_endpoint(2, 1, 1, 1);
+    bridge_t bridge;
+    bridge_init(&bridge);
+
+    route_policy_t policy = {0};
+    policy.default_action = ROUTE_DROP;
+    policy.count = 1;
+    policy.rules[0] = (route_rule_t){3, 0, 1, ROUTE_TO, 1, 0};
+    CHECK(bridge_set_policy(&bridge, &policy));
+    const uint8_t accepted[4] = {0x09, 0x91, 0x20, 0x30};
+    const uint8_t dropped[4] = {0x08, 0x80, 0x20, 0x30};
+    usb_mock_push_input(1, accepted);
+    usb_mock_push_input(1, dropped);
+    bridge_step(&bridge);
+    expect_output(0, accepted);
+    uint8_t packet[4];
+    CHECK(!usb_mock_pop_output(0, packet));
+    CHECK(!usb_mock_pop_output(2, packet));
+
+    route_policy_t invalid = {0};
+    invalid.default_action = ROUTE_TO;
+    CHECK(!bridge_set_policy(&bridge, &invalid));
+    CHECK(bridge_set_policy(&bridge, NULL));
+    usb_mock_push_input(1, dropped);
+    bridge_step(&bridge);
+    expect_output(0, dropped);
+}
+
 int main(void)
 {
     test_concurrent_traffic_no_echo();
     test_native_last_host_and_cdc_fan_out();
     test_write_backpressure_and_reconnect();
+    test_bridge_ordered_policy();
     puts("bridge_integration_test: passed");
     return EXIT_SUCCESS;
 }

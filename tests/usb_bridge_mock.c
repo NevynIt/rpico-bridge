@@ -53,6 +53,9 @@ void usb_mock_set_endpoint(uint8_t endpoint, uint8_t rx_cables,
     endpoints[endpoint].rx_cables = generation == 0 ? 0 : rx_cables;
     endpoints[endpoint].tx_cables = generation == 0 ? 0 : tx_cables;
     endpoints[endpoint].generation = generation;
+    endpoints[endpoint].route_id = endpoint == 0u ? 1u :
+                                   endpoint == USB_BRIDGE_CDC_ENDPOINT ? 2u :
+                                   (uint8_t)(endpoint + 2u);
 }
 
 void usb_mock_push_input(uint8_t endpoint, const uint8_t packet[4])

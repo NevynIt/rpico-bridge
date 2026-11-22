@@ -8,6 +8,8 @@
 #include "pico/stdlib.h"
 #include "pico/status_led.h"
 #include "cdc_bench.h"
+#include "route_control.h"
+#include "route_store.h"
 #if !defined(RPICO_CDC_BENCH)
 #include "tusb.h"
 #include "usb_host_hid.h"
@@ -28,6 +30,7 @@ typedef struct {
 } activity_t;
 
 static activity_t midi_activity;
+static uint32_t last_route_activity;
 #if !defined(RPICO_CDC_BENCH)
 static activity_t mouse_activity;
 #endif
@@ -120,6 +123,10 @@ int main(void)
     // PIO USB requires an integer multiple of its 12 MHz bit clock.
     set_sys_clock_khz(120000, true);
     bridge_init(&bridge);
+    route_store_init();
+    (void)bridge_set_policy(&bridge, route_store_policy());
+    route_control_init(&bridge);
+    last_route_activity = bridge.packets_received;
     midi_activity.events_seen = bridge.packets_received;
 #if !defined(RPICO_CDC_BENCH)
     mouse_activity.events_seen = usb_host_hid_activity_count();
@@ -147,6 +154,10 @@ int main(void)
 #endif
 
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        bool route_midi_active = bridge.packets_received != last_route_activity;
+        last_route_activity = bridge.packets_received;
+        route_store_task(now_ms, route_midi_active);
+        route_control_task();
         update_activity(&midi_activity, bridge.packets_received, now_ms);
 #if !defined(RPICO_CDC_BENCH)
         update_activity(&mouse_activity, usb_host_hid_activity_count(), now_ms);
@@ -184,5 +195,6 @@ int main(void)
             next_report_ms = now_ms + 1000u;
         }
         cdc_bench_service_reset(now_ms);
+        route_store_service_restart(now_ms);
     }
 }

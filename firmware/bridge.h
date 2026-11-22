@@ -2,6 +2,7 @@
 #define RPICO_BRIDGE_H
 
 #include "midi_router.h"
+#include "route_policy.h"
 #include "usb_bridge.h"
 
 typedef struct {
@@ -13,6 +14,8 @@ typedef struct {
 } bridge_t;
 
 void bridge_init(bridge_t *bridge);
+/* Apply a validated policy snapshot; NULL restores the default All policy. */
+bool bridge_set_policy(bridge_t *bridge, const route_policy_t *policy);
 void bridge_step(bridge_t *bridge);
 
 #endif

@@ -2,6 +2,9 @@
 
 #include <string.h>
 
+static bool policy_excludes_port(const route_policy_t *policy, uint8_t route_id,
+                                uint8_t cable);
+
 static void saturating_increment(uint32_t *value)
 {
     if (*value != UINT32_MAX) {
@@ -37,6 +40,7 @@ void midi_router_init(midi_router_t *router)
 {
     if (router != NULL) {
         memset(router, 0, sizeof(*router));
+        router->policy.default_action = ROUTE_ALL;
     }
 }
 
@@ -129,6 +133,88 @@ static void clear_endpoint_traffic(midi_router_t *router, uint8_t endpoint)
            sizeof(router->source_sysex[endpoint]));
 }
 
+static void purge_source_from_output(midi_router_output_t *output,
+                                     uint8_t source_endpoint,
+                                     uint8_t source_cable,
+                                     bool destination_excluded)
+{
+    const bool locked_source = output->sysex_locked &&
+                               output->sysex_endpoint == source_endpoint &&
+                               output->sysex_cable == source_cable;
+    uint8_t kept = 0;
+    for (uint8_t i = 0; i < output->count; ++i) {
+        const midi_router_item_t *item = &output->items[i];
+        if (item->source_endpoint == source_endpoint &&
+            item->source_cable == source_cable) {
+            continue;
+        }
+        if (kept != i) {
+            output->items[kept] = output->items[i];
+        }
+        ++kept;
+    }
+    output->count = kept;
+    set_stream_admitted(output, source_endpoint, source_cable, false);
+
+    if (locked_source) {
+        if (destination_excluded) {
+            output->sysex_locked = false;
+            output->pending_eox = false;
+        } else {
+            /* The receiver already saw this F0. Close it before any other
+             * queued stream can proceed. */
+            output->pending_eox = true;
+        }
+    }
+}
+
+static void reconcile_exclusions(midi_router_t *router,
+                                 const route_policy_t *next_policy)
+{
+    for (uint8_t destination = 0; destination < MIDI_ROUTER_MAX_ENDPOINTS;
+         ++destination) {
+        const midi_router_endpoint_t *target = &router->endpoints[destination];
+        for (uint8_t destination_cable = 0;
+             destination_cable < MIDI_ROUTER_MAX_CABLES; ++destination_cable) {
+            const bool was_destination_excluded = policy_excludes_port(
+                &router->policy, target->route_id, destination_cable);
+            const bool is_destination_excluded = policy_excludes_port(
+                next_policy, target->route_id, destination_cable);
+            midi_router_output_t *output =
+                &router->outputs[destination][destination_cable];
+
+            if (!was_destination_excluded && is_destination_excluded) {
+                /* No queued packet, including a synthetic EOX, may reach a
+                 * cable after it becomes excluded. */
+                memset(output, 0, sizeof(*output));
+                continue;
+            }
+
+            for (uint8_t source_endpoint = 0;
+                 source_endpoint < MIDI_ROUTER_MAX_ENDPOINTS;
+                 ++source_endpoint) {
+                const uint8_t source_id =
+                    router->endpoints[source_endpoint].route_id;
+                if (source_id == 0u) {
+                    continue;
+                }
+                for (uint8_t source_cable = 0;
+                     source_cable < MIDI_ROUTER_MAX_CABLES; ++source_cable) {
+                    const bool was_source_excluded = policy_excludes_port(
+                        &router->policy, source_id, source_cable);
+                    const bool is_source_excluded = policy_excludes_port(
+                        next_policy, source_id, source_cable);
+                    if (!was_source_excluded && is_source_excluded) {
+                        purge_source_from_output(output, source_endpoint,
+                                                 source_cable,
+                                                 is_destination_excluded);
+                    }
+                }
+            }
+        }
+    }
+}
+
 bool midi_router_set_endpoint(midi_router_t *router, uint8_t endpoint,
                               uint8_t rx_cables, uint8_t tx_cables,
                               uint32_t generation, bool connected)
@@ -150,6 +236,36 @@ bool midi_router_set_endpoint(midi_router_t *router, uint8_t endpoint,
     state->connected = connected;
     state->rx_cables = effective_rx;
     state->tx_cables = effective_tx;
+    if (state->route_id == 0u) {
+        state->route_id = endpoint == 0u ? 1u :
+                          endpoint == MIDI_ROUTER_MAX_ENDPOINTS - 1u ? 2u :
+                          (uint8_t)(endpoint + 2u);
+    }
+    return true;
+}
+
+bool midi_router_set_route_id(midi_router_t *router, uint8_t endpoint,
+                              uint8_t route_id)
+{
+    if (router == NULL || endpoint >= MIDI_ROUTER_MAX_ENDPOINTS ||
+        route_id == 0u) {
+        return false;
+    }
+    if (router->endpoints[endpoint].route_id != route_id) {
+        clear_endpoint_traffic(router, endpoint);
+        router->endpoints[endpoint].route_id = route_id;
+    }
+    return true;
+}
+
+bool midi_router_set_policy(midi_router_t *router,
+                            const route_policy_t *policy)
+{
+    if (router == NULL || !route_policy_validate(policy)) {
+        return false;
+    }
+    reconcile_exclusions(router, policy);
+    router->policy = *policy;
     return true;
 }
 
@@ -225,6 +341,64 @@ static bool push_to_output(midi_router_t *router, uint8_t destination,
     return true;
 }
 
+static uint8_t packet_channel(const uint8_t packet[4])
+{
+    const uint8_t cin = (uint8_t)(packet[0] & 0x0fu);
+    const uint8_t status = packet[1];
+    if (cin >= 0x08u && cin <= 0x0eu &&
+        (status >> 4) == cin && status < 0xf0u) {
+        return (uint8_t)(status & 0x0fu);
+    }
+    return ROUTE_SYSTEM_CHANNEL;
+}
+
+static const route_rule_t *matching_rule(const midi_router_t *router,
+                                         uint8_t source_id,
+                                         uint8_t source_cable,
+                                         uint8_t channel)
+{
+    for (uint8_t i = 0; i < router->policy.count; ++i) {
+        const route_rule_t *rule = &router->policy.rules[i];
+        if (rule->action == ROUTE_EXCLUDE) {
+            continue;
+        }
+        if ((rule->source_id == 0u || rule->source_id == source_id) &&
+            (rule->source_cable == ROUTE_ANY ||
+             rule->source_cable == source_cable) &&
+            (rule->channel == ROUTE_ANY || rule->channel == channel)) {
+            return rule;
+        }
+    }
+    return NULL;
+}
+
+static bool policy_excludes_port(const route_policy_t *policy, uint8_t route_id,
+                                uint8_t cable)
+{
+    for (uint8_t i = 0; i < policy->count; ++i) {
+        const route_rule_t *rule = &policy->rules[i];
+        if (rule->action == ROUTE_EXCLUDE && rule->source_id == route_id &&
+            rule->source_cable == cable) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool destination_allowed(const midi_router_t *router,
+                                const route_rule_t *rule,
+                                uint8_t destination)
+{
+    if (rule == NULL) {
+        return router->policy.default_action == ROUTE_ALL;
+    }
+    if (rule->action == ROUTE_ALL) {
+        return true;
+    }
+    return rule->action == ROUTE_TO &&
+           router->endpoints[destination].route_id == rule->destination_id;
+}
+
 midi_router_push_result_t midi_router_push(midi_router_t *router,
                                            uint8_t source_endpoint,
                                            const uint8_t packet[4])
@@ -247,6 +421,12 @@ midi_router_push_result_t midi_router_push(midi_router_t *router,
     }
 
     const uint8_t cin = (uint8_t)(packet[0] & 0x0fu);
+    const uint8_t channel = packet_channel(packet);
+    const route_rule_t *rule = matching_rule(router, source->route_id,
+                                              source_cable, channel);
+    const bool source_excluded = policy_excludes_port(&router->policy,
+                                                       source->route_id,
+                                                       source_cable);
     const bool realtime = (cin == 0x05u || cin == 0x0fu) &&
                           packet[1] >= 0xf8u;
     const bool starts = has_sysex_start(packet);
@@ -283,6 +463,10 @@ midi_router_push_result_t midi_router_push(midi_router_t *router,
     item.sysex_end = is_sysex && ends;
     item.realtime = realtime;
 
+    if (source_excluded) {
+        return MIDI_ROUTER_PUSH_NO_DESTINATION;
+    }
+
     bool has_destination = false;
     bool queued = false;
     for (uint8_t destination = 0; destination < MIDI_ROUTER_MAX_ENDPOINTS;
@@ -295,7 +479,31 @@ midi_router_push_result_t midi_router_push(midi_router_t *router,
             if (destination == source_endpoint && cable == source_cable) {
                 continue;
             }
+            if (policy_excludes_port(&router->policy, target->route_id, cable)) {
+                continue;
+            }
             midi_router_output_t *output = &router->outputs[destination][cable];
+            /* A SysEx continuation must reach every destination that received
+             * its F0, even if the active policy changed mid-stream. */
+            if (continuation && !realtime &&
+                stream_admitted(output, source_endpoint, source_cable)) {
+                has_destination = true;
+                const bool output_queued = push_to_output(router, destination,
+                                                           cable, &item);
+                if (output_queued && item.sysex_end) {
+                    set_stream_admitted(output, source_endpoint, source_cable,
+                                        false);
+                }
+                queued = output_queued || queued;
+                continue;
+            }
+            if ((rule != NULL && rule->action == ROUTE_DROP) ||
+                !destination_allowed(router, rule, destination) ||
+                (rule != NULL && rule->action == ROUTE_TO &&
+                 rule->destination_cable != ROUTE_ANY &&
+                 cable != rule->destination_cable)) {
+                continue;
+            }
             if (continuation && !realtime &&
                 !stream_admitted(output, source_endpoint, source_cable)) {
                 continue;

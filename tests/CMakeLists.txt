@@ -6,6 +6,7 @@ enable_testing()
 add_executable(midi_router_test
     midi_router_test.c
     ../firmware/midi_router.c
+    ../firmware/route_policy.c
 )
 target_include_directories(midi_router_test PRIVATE ../firmware)
 target_compile_features(midi_router_test PRIVATE c_std_11)
@@ -17,6 +18,7 @@ add_executable(bridge_integration_test
     usb_bridge_mock.c
     ../firmware/bridge.c
     ../firmware/midi_router.c
+    ../firmware/route_policy.c
 )
 target_include_directories(bridge_integration_test PRIVATE ../firmware .)
 target_compile_features(bridge_integration_test PRIVATE c_std_11)

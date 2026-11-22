@@ -14,6 +14,19 @@ void bridge_init(bridge_t *bridge)
     bridge->packets_sent = 0;
 }
 
+bool bridge_set_policy(bridge_t *bridge, const route_policy_t *policy)
+{
+    if (bridge == NULL) {
+        return false;
+    }
+    if (policy == NULL) {
+        route_policy_t all = {0};
+        all.default_action = ROUTE_ALL;
+        return midi_router_set_policy(&bridge->router, &all);
+    }
+    return midi_router_set_policy(&bridge->router, policy);
+}
+
 static void sync_endpoints(bridge_t *bridge)
 {
     for (uint8_t index = 0; index < USB_BRIDGE_ENDPOINT_COUNT; ++index) {
@@ -21,7 +34,9 @@ static void sync_endpoints(bridge_t *bridge)
         usb_bridge_endpoint_get(index, &current);
         usb_bridge_endpoint_t previous = bridge->endpoints[index];
         if (current.generation == previous.generation &&
-            current.rx_cables == previous.rx_cables && current.tx_cables == previous.tx_cables) {
+            current.rx_cables == previous.rx_cables &&
+            current.tx_cables == previous.tx_cables &&
+            current.route_id == previous.route_id) {
             continue;
         }
 
@@ -29,6 +44,10 @@ static void sync_endpoints(bridge_t *bridge)
                                      current.tx_cables, current.generation,
                                      current.generation != 0)) {
             bridge->endpoints[index] = current;
+            if (current.route_id != 0u) {
+                (void)midi_router_set_route_id(&bridge->router, index,
+                                               current.route_id);
+            }
             bridge->next_tx_cable[index] = 0;
         }
     }

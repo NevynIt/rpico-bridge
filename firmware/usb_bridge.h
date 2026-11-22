@@ -16,6 +16,8 @@ typedef struct {
     uint8_t tx_cables;
     /* Zero means inactive. A new value identifies every mount/unmount change. */
     uint32_t generation;
+    /* Stable policy identity: 1 native, 2 CDC, 3+ catalogued PIO MIDI. */
+    uint8_t route_id;
 } usb_bridge_endpoint_t;
 
 /* A raw USB-MIDI 1.0 event packet. Byte 0 retains cable number and CIN. */
@@ -28,6 +30,11 @@ bool usb_bridge_init(void);
 
 /* Pump native-device and host stacks without waiting for transfers to finish. */
 void usb_bridge_task(void);
+
+/* Stop/resume the timed PIO host frame source around flash operations. The
+ * pause call returns true if a device is physically present on the PIO root. */
+bool usb_bridge_pause_pio_host(void);
+void usb_bridge_resume_pio_host(void);
 
 /* Flush queued nonblocking USB writes where supported. */
 void usb_bridge_flush(void);

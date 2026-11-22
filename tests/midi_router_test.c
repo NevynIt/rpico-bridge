@@ -405,6 +405,204 @@ static void test_midstream_overflow_aborts_admission(void)
     CHECK(!midi_router_peek(&router, 1, 0, packet));
 }
 
+static void test_ordered_policy_and_default_drop(void)
+{
+    midi_router_t router;
+    midi_router_init(&router);
+    connect_endpoint(&router, 0, 2, 2, 1);
+    connect_endpoint(&router, 1, 2, 2, 1);
+    connect_endpoint(&router, 2, 2, 2, 1);
+    CHECK(midi_router_set_route_id(&router, 0, 1));
+    CHECK(midi_router_set_route_id(&router, 1, 3));
+    CHECK(midi_router_set_route_id(&router, 2, 4));
+
+    route_policy_t policy = {0};
+    policy.default_action = ROUTE_DROP;
+    policy.count = 3;
+    policy.rules[0] = (route_rule_t){3, ROUTE_ANY, 0, ROUTE_DROP, 0, ROUTE_ANY};
+    policy.rules[1] = (route_rule_t){3, 1, 1, ROUTE_TO, 4, 1};
+    policy.rules[2] = (route_rule_t){3, 1, ROUTE_ANY, ROUTE_TO, 1, ROUTE_ANY};
+    CHECK(route_policy_validate(&policy));
+    CHECK(midi_router_set_policy(&router, &policy));
+
+    const uint8_t channel_zero[] = {0x19, 0x90, 0x45, 0x67};
+    const midi_router_push_result_t dropped =
+        midi_router_push(&router, 1, channel_zero);
+    CHECK(dropped ==
+          MIDI_ROUTER_PUSH_NO_DESTINATION); /* first matching DROP wins */
+    const uint8_t channel_one[] = {0x19, 0x91, 0x45, 0x67};
+    CHECK(midi_router_push(&router, 1, channel_one) == MIDI_ROUTER_PUSH_ROUTED);
+    const uint8_t expected[] = {0x19, 0x91, 0x45, 0x67};
+    take_packet(&router, 2, 1, expected); /* cable-specific TO */
+    uint8_t packet[4];
+    CHECK(!midi_router_peek(&router, 2, 0, packet));
+    CHECK(!midi_router_peek(&router, 0, 0, packet)); /* unmatched default DROP */
+    CHECK(!midi_router_peek(&router, 1, 1, packet)); /* no exact echo */
+}
+
+static void test_policy_cable_and_system_channel(void)
+{
+    midi_router_t router;
+    midi_router_init(&router);
+    connect_endpoint(&router, 0, 2, 2, 1);
+    connect_endpoint(&router, 1, 2, 2, 1);
+    connect_endpoint(&router, 2, 2, 2, 1);
+    CHECK(midi_router_set_route_id(&router, 0, 1));
+    CHECK(midi_router_set_route_id(&router, 1, 3));
+    CHECK(midi_router_set_route_id(&router, 2, 4));
+
+    route_policy_t policy = {0};
+    policy.default_action = ROUTE_DROP;
+    policy.count = 2;
+    policy.rules[0] = (route_rule_t){3, 1, 0, ROUTE_ALL, 0, ROUTE_ANY};
+    policy.rules[1] = (route_rule_t){3, 0, ROUTE_SYSTEM_CHANNEL, ROUTE_TO,
+                                     4, ROUTE_ANY};
+    CHECK(midi_router_set_policy(&router, &policy));
+    const uint8_t cable_zero[] = {0x08, 0x80, 0x20, 0x30};
+    const uint8_t cable_one[] = {0x19, 0x90, 0x20, 0x30};
+    CHECK(midi_router_push(&router, 1, cable_zero) ==
+          MIDI_ROUTER_PUSH_NO_DESTINATION);
+    CHECK(midi_router_push(&router, 1, cable_one) == MIDI_ROUTER_PUSH_ROUTED);
+    take_packet(&router, 0, 1, cable_one);
+    take_packet(&router, 2, 1, cable_one);
+    const uint8_t cable_zero_routed[] = {0x09, 0x90, 0x20, 0x30};
+    take_packet(&router, 0, 0, cable_zero_routed);
+    take_packet(&router, 2, 0, cable_zero_routed);
+    take_packet(&router, 1, 0, cable_zero_routed);
+
+    const uint8_t sysex_start[] = {0x04, 0xF0, 0x01, 0x02};
+    const uint8_t sysex_end[] = {0x06, 0x03, 0xF7, 0};
+    CHECK(midi_router_push(&router, 1, sysex_start) == MIDI_ROUTER_PUSH_ROUTED);
+    take_packet(&router, 2, 0, sysex_start);
+    const uint8_t eox_expected[] = {0x06, 0x03, 0xF7, 0};
+    CHECK(midi_router_push(&router, 1, sysex_end) == MIDI_ROUTER_PUSH_ROUTED);
+    take_packet(&router, 2, 0, eox_expected);
+    uint8_t packet[4];
+    CHECK(!midi_router_peek(&router, 0, 0, packet));
+}
+
+static void test_policy_change_finishes_admitted_sysex(void)
+{
+    midi_router_t router;
+    midi_router_init(&router);
+    connect_endpoint(&router, 0, 1, 1, 1);
+    connect_endpoint(&router, 1, 1, 1, 1);
+    route_policy_t all = {0};
+    CHECK(midi_router_set_policy(&router, &all));
+    const uint8_t start[] = {0x04, 0xF0, 0x01, 0x02};
+    CHECK(midi_router_push(&router, 1, start) == MIDI_ROUTER_PUSH_ROUTED);
+    take_packet(&router, 0, 0, start);
+
+    route_policy_t drop = {0};
+    drop.default_action = ROUTE_DROP;
+    CHECK(midi_router_set_policy(&router, &drop));
+    const uint8_t end[] = {0x06, 0x03, 0xF7, 0};
+    CHECK(midi_router_push(&router, 1, end) == MIDI_ROUTER_PUSH_ROUTED);
+    take_packet(&router, 0, 0, end);
+    const uint8_t note[] = {0x09, 0x90, 0x22, 0x33};
+    CHECK(midi_router_push(&router, 1, note) == MIDI_ROUTER_PUSH_NO_DESTINATION);
+}
+
+static void test_policy_validation(void)
+{
+    route_policy_t policy = {0};
+    CHECK(route_policy_validate(&policy));
+    policy.default_action = ROUTE_TO;
+    CHECK(!route_policy_validate(&policy));
+    policy.default_action = ROUTE_DROP;
+    policy.count = 1;
+    policy.rules[0] = (route_rule_t){0, 16, ROUTE_ANY, ROUTE_DROP, 0, ROUTE_ANY};
+    CHECK(!route_policy_validate(&policy));
+    policy.rules[0].source_cable = ROUTE_ANY;
+    CHECK(route_policy_validate(&policy));
+    policy.rules[0].action = ROUTE_TO;
+    CHECK(!route_policy_validate(&policy));
+    policy.rules[0] = (route_rule_t){1, 0, ROUTE_ANY, ROUTE_EXCLUDE, 0,
+                                     ROUTE_ANY};
+    CHECK(route_policy_validate(&policy));
+    policy.rules[0].source_id = 0;
+    CHECK(!route_policy_validate(&policy));
+}
+
+static void test_exclude_is_global_for_source_and_destination(void)
+{
+    midi_router_t router;
+    midi_router_init(&router);
+    connect_endpoint(&router, 0, 1, 1, 1);
+    connect_endpoint(&router, 1, 2, 2, 1);
+    connect_endpoint(&router, 2, 1, 1, 1);
+    CHECK(midi_router_set_route_id(&router, 0, 1));
+    CHECK(midi_router_set_route_id(&router, 1, 3));
+    CHECK(midi_router_set_route_id(&router, 2, 4));
+
+    route_policy_t policy = {0};
+    policy.default_action = ROUTE_DROP;
+    policy.count = 2;
+    policy.rules[0] = (route_rule_t){1, 0, ROUTE_ANY, ROUTE_TO, 3, 0};
+    policy.rules[1] = (route_rule_t){3, 0, ROUTE_ANY, ROUTE_EXCLUDE, 0,
+                                     ROUTE_ANY};
+    CHECK(route_policy_validate(&policy));
+    CHECK(midi_router_set_policy(&router, &policy));
+
+    const uint8_t native_note[] = {0x09, 0x90, 0x21, 0x31};
+    CHECK(midi_router_push(&router, 0, native_note) ==
+          MIDI_ROUTER_PUSH_NO_DESTINATION); /* explicit TO cannot override */
+    uint8_t packet[4];
+    CHECK(!midi_router_peek(&router, 1, 0, packet));
+
+    /* Exclusion is global even though an earlier ALL rule matches first. */
+    memset(&policy, 0, sizeof(policy));
+    policy.default_action = ROUTE_ALL;
+    policy.count = 2;
+    policy.rules[0] = (route_rule_t){0, ROUTE_ANY, ROUTE_ANY,
+                                    ROUTE_ALL, 0, ROUTE_ANY};
+    policy.rules[1] = (route_rule_t){3, 0, ROUTE_ANY, ROUTE_EXCLUDE, 0,
+                                     ROUTE_ANY};
+    CHECK(midi_router_set_policy(&router, &policy));
+
+    const uint8_t excluded_source[] = {0x09, 0x90, 0x41, 0x51};
+    CHECK(midi_router_push(&router, 1, excluded_source) ==
+          MIDI_ROUTER_PUSH_NO_DESTINATION);
+    CHECK(!midi_router_peek(&router, 0, 0, packet));
+    CHECK(!midi_router_peek(&router, 2, 0, packet));
+
+    const uint8_t sibling_source[] = {0x19, 0x91, 0x42, 0x52};
+    CHECK(midi_router_push(&router, 1, sibling_source) ==
+          MIDI_ROUTER_PUSH_ROUTED);
+    const uint8_t cable_zero[] = {0x09, 0x91, 0x42, 0x52};
+    take_packet(&router, 0, 0, cable_zero);
+    take_packet(&router, 2, 0, cable_zero);
+    CHECK(!midi_router_peek(&router, 1, 0, packet));
+
+    CHECK(midi_router_push(&router, 0, native_note) ==
+          MIDI_ROUTER_PUSH_ROUTED);
+    const uint8_t sibling_output[] = {0x19, 0x90, 0x21, 0x31};
+    take_packet(&router, 1, 1, sibling_output);
+    take_packet(&router, 2, 0, native_note);
+    CHECK(!midi_router_peek(&router, 1, 0, packet));
+}
+
+static void test_policy_change_flushes_stale_queue(void)
+{
+    midi_router_t router;
+    midi_router_init(&router);
+    connect_endpoint(&router, 0, 1, 1, 1);
+    connect_endpoint(&router, 1, 1, 1, 1);
+    const uint8_t stale[] = {0x09, 0x90, 0x44, 0x55};
+    CHECK(midi_router_push(&router, 1, stale) == MIDI_ROUTER_PUSH_ROUTED);
+
+    route_policy_t exclude = {0};
+    exclude.default_action = ROUTE_ALL;
+    exclude.count = 1;
+    exclude.rules[0] = (route_rule_t){1, 0, ROUTE_ANY, ROUTE_EXCLUDE, 0,
+                                      ROUTE_ANY};
+    CHECK(midi_router_set_policy(&router, &exclude));
+    route_policy_t all = {0};
+    CHECK(midi_router_set_policy(&router, &all));
+    uint8_t packet[4];
+    CHECK(!midi_router_peek(&router, 0, 0, packet));
+}
+
 int main(void)
 {
     test_all_to_all_identity_and_payload();
@@ -423,6 +621,12 @@ int main(void)
     test_interrupted_sysex_preserves_prior_complete_stream();
     test_interrupted_started_sysex_discards_queued_fragments();
     test_midstream_overflow_aborts_admission();
+    test_ordered_policy_and_default_drop();
+    test_policy_cable_and_system_channel();
+    test_policy_change_finishes_admitted_sysex();
+    test_policy_validation();
+    test_exclude_is_global_for_source_and_destination();
+    test_policy_change_flushes_stale_queue();
     printf("midi_router_test: %u checks passed\n", tests_run);
     return EXIT_SUCCESS;
 }

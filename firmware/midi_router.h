@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "route_policy.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,11 +41,13 @@ typedef struct {
     bool connected;
     uint8_t rx_cables;
     uint8_t tx_cables;
+    uint8_t route_id;
     uint32_t generation;
 } midi_router_endpoint_t;
 
 typedef struct {
     midi_router_endpoint_t endpoints[MIDI_ROUTER_MAX_ENDPOINTS];
+    route_policy_t policy;
     midi_router_output_t outputs[MIDI_ROUTER_MAX_ENDPOINTS][MIDI_ROUTER_MAX_CABLES];
     bool source_sysex[MIDI_ROUTER_MAX_ENDPOINTS][MIDI_ROUTER_MAX_CABLES];
     uint32_t overflow_drops;
@@ -70,14 +74,23 @@ bool midi_router_set_endpoint(midi_router_t *router, uint8_t endpoint,
                               uint8_t rx_cables, uint8_t tx_cables,
                               uint32_t generation, bool connected);
 
+/* Update an endpoint's stable logical route ID without changing cable state. */
+bool midi_router_set_route_id(midi_router_t *router, uint8_t endpoint,
+                              uint8_t route_id);
+
+/* Copy a validated policy. Existing queued packets keep their decision. */
+bool midi_router_set_policy(midi_router_t *router,
+                           const route_policy_t *policy);
+
 /* Disconnect and purge one endpoint. Generation is retained for diagnostics. */
 void midi_router_remove_endpoint(midi_router_t *router, uint8_t endpoint,
                                  uint32_t generation);
 
 /*
  * Push one USB-MIDI event packet (cable/CIN in byte 0, MIDI bytes 1..3).
- * It fans out to every configured TX cable except its exact source cable;
- * destination cable numbers replace only the high nibble of byte 0.
+ * It applies the first matching ordered route policy rule, then fans out to
+ * eligible TX cables except the exact source cable. Destination cable numbers
+ * replace only the high nibble of byte 0. The default policy is All.
  * CIN 0xF is treated as a raw single-byte packet; CIN 0x5/0xF status bytes
  * >= 0xF8 may pass an active SysEx lock as realtime traffic.
  *

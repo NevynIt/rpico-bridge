@@ -16,5 +16,6 @@ void cdc_bench_reset_session(bool clear_cdc_buffers);
 /* Preserve the exact BOOTSEL command across CDC disconnect, then reset in main. */
 bool cdc_bench_bootsel_pending(void);
 void cdc_bench_service_reset(uint32_t now_ms);
+void cdc_bench_request_bootsel(void);
 
 #endif

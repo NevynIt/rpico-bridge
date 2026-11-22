@@ -4,7 +4,7 @@ A USB MIDI 1.0 bridge for the Waveshare RP2040-Zero. The firmware includes
 native MIDI and CDC interfaces, a PIO USB host, ordered routing rules and a
 local configurator. Its ELF descriptors expose CDC control/data and USB Audio
 Control/MIDI Streaming interfaces, with one MIDI cable in each direction.
-Native USB was bench-checked on the current image. The user reports two-device
+Earlier firmware passed native USB bench checks. The user reports two-device
 routing on an earlier image. Production hub wiring and power still need
 verification. See
 [project state](docs/STATE.md) for evidence and [hardware](docs/HARDWARE.md) for
@@ -38,9 +38,9 @@ cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 ```
 
-Normal and bench Release builds were warning-free. Native CTest passed 2/2.
-Earlier clean-clone default and bench UF2 hashes matched, and ASan/UBSan Debug
-CTest passed 2/2 with LeakSanitizer disabled.
+Normal and bench Release builds were warning-free. Native CTest passed 2/2,
+including cable-exclusion routing. Earlier clean-clone default and bench UF2
+hashes matched, and ASan/UBSan Debug CTest passed 2/2 with LeakSanitizer disabled.
 
 ## CDC test peer and bench mode
 
@@ -62,11 +62,6 @@ Build it in a separate directory:
 cmake -S . -B build-cdc-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_CDC_BENCH=ON
 cmake --build build-cdc-bench
 ```
-
-Current regular UF2 `8aedbee5…580e` was installed and enumerates as `1209:0001`
-on bus 1 device 42 with the hub, MicroFreak and APC Key attached. The image
-contains a default-all policy and a global exclusion for APC Key ID 4 cable 1.
-Key and pad audibility on this final configuration is awaiting user confirmation.
 
 After asserting CDC DTR, write packets as `M <8 hex digits>\n` to inject them
 from the CDC peer. Native USB-MIDI packets routed to CDC are printed in the same
@@ -90,16 +85,39 @@ image after about 200 ms of magenta. The default image physically entered
 ROM without buttons. The magenta hue and timing were not independently
 distinguished. Hardware BOOT/RESET bypasses firmware.
 
-The installed palette is gray for ready, blue after the hub accepts
-`SET_CONFIGURATION`, green for a host MIDI interface, cyan for recognized mouse
-reports, amber for received MIDI, magenta for about 200 ms before BOOTSEL, and
-red for initialization failure. Blue confirms configuration acceptance, not
-class readiness. Amber pulses at a 250 ms half-period for 1.5 seconds after
-activity. A temporary image showed green idle and cyan on mouse movement with
-one HID receiver through the small hub and wall charger. An earlier regular
-image showed blue and activity flashes, though the user found rapid hues hard to
-distinguish. HID handling only observes reports. It does not route native
-pointer input or add controls. Hardware BOOT/RESET bypasses the palette.
+## Status LED
+
+The configurator's **Status LED** panel reads and saves seven RGB colors plus
+MIDI pulse and mouse activity timing. Defaults are ready gray, hub blue, MIDI
+interface green (`#000300`), mouse cyan, MIDI traffic amber, BOOTSEL magenta and
+initialization error red. The MIDI traffic pulse defaults to 8 ms. Pulses merge
+during bursts and can be set from 2 to 100 ms. Mouse phase defaults to 250 ms
+and hold to 1500 ms. These describe firmware defaults, not visual confirmation
+of the current board.
+
+On the CDC console, `help led` lists LED commands and `led` prints current or
+staged settings. Stage changes with `led color ready|hub|midi|mouse|traffic|bootsel|error RRGGBB`,
+`led timing MIDI_PULSE_MS MOUSE_PHASE_MS MOUSE_HOLD_MS` or `led defaults`. Use
+`led save` to persist staged values or `led abort` to discard them. Timing
+ranges are pulse 2–100 ms, phase 10–1000 ms and hold from phase through 5000 ms.
+With asserted DTR, `R LED GET` returns one `R LED` line containing pulse, phase,
+hold, then seven six-digit RGB values in the same order. `R LED SET` uses that
+same order: pulse, phase, hold, ready, hub, midi, mouse, traffic, bootsel,
+error. It returns one `R OK` only after the durable write is verified. Saving
+while a PIO host is attached pauses routing, quiesces the PIO frame timer and
+restarts the board; reconnect CDC and the hub afterward. See
+[CDC wire protocol](#cdc-wire-protocol) and the configurator.
+
+LED settings, routing policy and device catalog are stored in littlefs v2.11.3
+(`6cb4e86540eca0d9ba62500a298385c9d863c8be`). On first boot after upgrading,
+firmware migrates the legacy policy and device catalog into littlefs and applies
+default LED settings. Existing rules and remembered device IDs are retained.
+The regular UF2 was flashed and verified. CDC checks read the migrated APC Key
+cable exclusion and the MicroFreak, APC Key and Circuit Tracks catalog entries,
+saved and restored LED settings with durable acknowledgements, and confirmed
+policy/catalog readback after each restart. `host=0` throughout; no attached
+instruments, audible routing or LED colors were verified in this check. See
+[project state](docs/STATE.md) for the image hash and detailed results.
 
 ## Configure routing
 
@@ -133,7 +151,7 @@ requests RP2040 bootloader mode. Cable selectors accept `0` through `15` or
 `any`; channel selectors accept `1` through `16`, `system` or `any`. `begin`
 without an argument uses the `all` fallback. Rule actions are `all`, `drop`, or
 `to DESTINATION CABLE`. To globally exclude one cable on a remembered device,
-use `rule DEVICE CABLE any exclude`. For example, the current local catalog has
+use `rule DEVICE CABLE any exclude`. For example, an earlier local catalog had
 the APC Key 25 mk2 at ID 4; `rule 4 1 any exclude` blocks cable 1 in both
 directions. The Akai protocol assigns the keybed and sustain to cable 0 and
 control messages to cable 1, so this leaves the keyboard and sustain available
@@ -144,7 +162,7 @@ The device accepts an exclusion before or after other rules because it applies
 globally. It cannot be overridden by rule order. New rule edits use the CDC
 configurator or CLI; the current firmware image already includes this capability.
 
-The verified default image passed DTR welcome, `help` with CR, `help rule` with
+An earlier default image passed DTR welcome, `help` with CR, `help rule` with
 CRLF, `devices`, same-session `R GET` and malformed-rule rollback. A temporary
 default-drop policy routed channel 1 from CDC to native USB cable 0 without echo
 and dropped channel 2. The saved rule survived software BOOTSEL and picotool
@@ -186,9 +204,13 @@ Lines such as the DTR welcome, help text, `midi ...` diagnostics, `M ...` packet
 traffic and `R INFO ...` notices may interleave with responses. Ignore lines
 that do not match the current response. Only one request may be outstanding.
 
-Before policy or catalog writes, firmware pauses routing and cancels its
-application-owned PIO frame timer. Pico SDK `flash_safe_execute` masks IRQs and
-ensures the other core is not executing or reading flash during the operation.
+Before policy, catalog or LED settings writes, firmware pauses routing and
+cancels its application-owned PIO frame timer. Pico SDK `flash_safe_execute`
+masks IRQs and ensures the other core is not executing or reading flash. This
+firmware uses core 0 only and sets `PICO_FLASH_ASSUME_CORE1_SAFE=1` because core
+1 is unused. LittleFS writes the settings file and verifies the resulting data
+before acknowledging a save. An attached PIO host is paused and the board
+restarts after a successful save, then devices enumerate again.
 [Pico SDK flash safety](https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#pico_flash)
 explains this guarantee. The firmware verifies flash readback before `R COMMIT`
 returns `R OK`; an attached PIO host then triggers a controlled reboot and

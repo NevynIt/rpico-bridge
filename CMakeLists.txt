@@ -42,6 +42,7 @@ set(bridge_sources
     firmware/route_policy.c
     firmware/route_control.c
     firmware/route_store.c
+    firmware/led_config.c
     firmware/usb_device.c
     firmware/usb_host.c
     firmware/cdc_bench.c
@@ -49,7 +50,11 @@ set(bridge_sources
 if(NOT RPICO_CDC_BENCH)
     list(APPEND bridge_sources firmware/usb_host_hid.c firmware/usb_host_identity.c)
 endif()
-add_executable(rpico_bridge ${bridge_sources} firmware/embedded_cli.c)
+set(littlefs_sources
+    firmware/third_party/littlefs/lfs.c
+    firmware/third_party/littlefs/lfs_util.c
+)
+add_executable(rpico_bridge ${bridge_sources} ${littlefs_sources} firmware/embedded_cli.c)
 target_compile_features(rpico_bridge PRIVATE c_std_11)
 set_source_files_properties(${bridge_sources} PROPERTIES
     COMPILE_OPTIONS "-Wall;-Wextra;-Wshadow;-Wstrict-prototypes"
@@ -60,7 +65,12 @@ target_include_directories(rpico_bridge PRIVATE firmware)
 target_compile_definitions(rpico_bridge PRIVATE
     PICO_NO_BI_PROGRAM_BUILD_DATE=1
     PICO_FLASH_ASSUME_CORE1_SAFE=1
+    LFS_NO_MALLOC=1
+    LFS_NO_DEBUG=1
+    LFS_NO_WARN=1
+    LFS_NO_ERROR=1
 )
+target_include_directories(rpico_bridge PRIVATE firmware/third_party/littlefs)
 target_link_libraries(rpico_bridge PRIVATE pico_stdlib pico_status_led pico_unique_id pico_bootrom pico_flash tinyusb_device)
 if(RPICO_CDC_BENCH)
     target_compile_definitions(rpico_bridge PRIVATE RPICO_CDC_BENCH=1)

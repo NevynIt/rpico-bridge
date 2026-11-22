@@ -1,73 +1,66 @@
 # Project state
 
-**Prototype status.** Current regular UF2 `8aedbee5…580e` enumerates as
-`1209:0001`, bus 1 device 42, with the hub, MicroFreak and APC Key attached.
-Saved policy is default ALL plus a global exclusion of APC Key ID 4 cable 1.
-Final audible key/pad confirmation is still pending.
+**Prototype status.** Regular littlefs/LED firmware is flashed and verified on the
+Pico. CDC checks confirmed migration of the saved routing policy and device
+catalog, LED save/readback, and controlled restart. `host=0` throughout these
+checks. A PIO root was reported during the save-triggered watchdog restart, but
+physical hub and instrument attachment were not confirmed. Visual palette,
+connected instrument routing and audible output for this image remain unverified.
 
 ## Verification
 
-- Native Release tests pass 2/2, including exclusion tests. Earlier normal and
-  CDC bench Release builds were warning-free; ASan/UBSan also passed 2/2 with
-  LeakSanitizer disabled.
-- Current UF2 was installed and verified. Attached-hub ALL-policy save and
-  restore both returned durable acknowledgements and rebooted. Enumeration went
-  through bus 1 devices 36, 37 and 38. Device names and IDs persisted.
-- Physical console checks passed for DTR welcome, `help` with CR, `help rule`
-  with CRLF, `devices`, same-session `R GET` and malformed-rule rollback.
-  A temporary default-drop policy routed channel 1 from CDC to native cable 0
-  without echo and dropped channel 2. It survived software BOOTSEL and reboot.
-  The original default-all/no-rules policy was restored durably.
-- The owner reports MicroFreak (one cable pair) and APC Key 25 mk2 (two pairs)
-  appeared by name and remained catalogued across reboot. APC-to-MicroFreak
-  routing passed after reboot on the earlier firmware. The APC keybed/sustain is
-  cable 0 and controls are cable 1 per [Akai's protocol, v1.1](https://cdn.inmusicbrands.com/akai/attachments/APC%20Key%2025%20mk2%20-%20Communication%20Protocol%20-%20v1.1.pdf).
-- Current saved exclusion is `R RULE 4 1 255 3 0 255`. It globally excludes
-  APC Key cable 1 as source and destination while leaving cable 0 available.
-  Future routing edits use configuration; they do not need firmware updates.
-- SDK flash writes pause routing and cancel the application-owned PIO frame
-  timer before `flash_safe_execute`, which masks interrupts and coordinates
-  flash-safe execution across cores. Readback is checked before commit ACK.
-  See [Pico SDK flash safety](https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#pico_flash).
-  A prior automatic catalog save correlated with a host stall; causation was
-  not established. Attached-hub save/restart now passed HIL.
-- `configurator/dist/index.html` is a self-contained build of about 217 KB.
-  Seven Node tests and JSDOM integration pass. A full-bundle headless Chromium
-  run crashed; a file-origin API probe found browser APIs, but no live
-  browser-to-board session has passed.
-- Earlier CDC MIDI harness testing passed five exact packets each way without
-  echo and restored Linux bindings. `tools/midi_log.py` fake-backend tests pass.
-  No live OS MIDI app was run because the container lacks ALSA sequencer support.
-- One HID receiver produced mouse reports through the small hub on a temporary
-  image. Empty-hub green was observed with the laptop disconnected. Combined
-  charger draw and loaded standalone power remain unverified.
+- Regular UF2 SHA-256
+  `69c4c94741fea452041af3b0b6e9478f668155008b5d249c96bba4b1e033834e` matched
+  the clean-stage artifact and passed picotool flash verification. Bench UF2
+  hash begins `afc27ecf` and ends `6c4`.
+- On-board CDC showed migrated rule `R RULE 4 1 255 3 0 255` and catalog
+  entries ID 3 Arturia MicroFreak, ID 4 APC Key 25 mk2 and ID 5 Circuit Tracks.
+  `help led`, LED show/stage/abort and rejection of a 1 ms pulse passed.
+- Changing pulse to 9 ms and ready color returned a durable ACK, restarted the
+  board and persisted on readback. Restoring defaults returned an ACK and
+  restarted the board. Readback showed 8 ms and ready `0C0C0C`; the same policy
+  and catalog remained present. Both A/B images reported `host=0` and catalog
+  IDs 3–5 offline, with the saved APC rule present. No physical MIDI interfaces
+  were mounted. Physical hub and instrument attachment were not confirmed.
+- Normal and CDC bench Release firmware builds are warning-free. Native Release
+  CTest passes 2/2. Native flash mocks simulated v1 migration, failed-write
+  rollback and interrupted format.
+- Configurator has 10 Node tests and JSDOM Web Serial integration coverage for
+  LED load/save and routing. No live browser-to-board session has passed. No live
+  OS MIDI logger test ran because the container lacks ALSA sequencer support.
+- Default palette is ready `0C0C0C`, hub `000812`, MIDI interface `000300`,
+  mouse `001212`, traffic `120A00`, BOOTSEL `120012`, error `0C0000`. Traffic
+  pulse defaults to 8 ms (allowed 2–100); mouse phase/hold default to 250/1500
+  ms. Current-image LED colors have not been visually confirmed.
+- LittleFS 2.11.3 is pinned at
+  `6cb4e86540eca0d9ba62500a298385c9d863c8be`. It stores LED settings, policy
+  and catalog. New-filesystem initialization migrates legacy policy/catalog.
+  Flash writes pause routing, cancel the PIO frame timer, use SDK
+  `flash_safe_execute` and verify data before ACK. With a PIO root, the board
+  restarts after saves and host devices must enumerate again.
 - ELF descriptors expose CDC control/data and USB Audio Control/MIDI Streaming,
-  one embedded MIDI jack per direction. The device announces 100 mA.
+  with one embedded MIDI jack each direction. The board announces 100 mA.
+  Production hub power, protection and loaded standalone operation remain
+  unverified.
 
-## Routing and constraints
+## Next checks
 
-- Up to 24 ordered rules match source device, cable and channel. Actions route to
-  all, drop or one destination/cable. MIDI channel values remain unchanged.
-  Action 3 globally excludes one exact remembered device cable in both
-  directions before ordered rules. It cannot be overridden by rule order.
-- `tools/midi_routes.py` supports `ports`, `devices`, `show` and `apply FILE`,
-  including `action: "exclude"`. The React configurator uses Web Serial and
-  Web MIDI. Open its standalone HTML directly in compatible Chromium first;
-  use HTTPS or localhost if file-origin permissions fail.
-- PIO supports seven devices, two hub nodes and eight MIDI interfaces. HID is
-  observe-only. Host pins are GPIO14/15. Breakout labels are V, D−, D+, G;
-  CC, protected host supply, production VBUS behavior and fault protection
-  remain unverified. The reported APC trial used the externally powered
-  seven-port hub with the yellow PIO VBUS jumper disconnected; Pico power
-  source during that earlier trial was unconfirmed.
-- Physical unplug/replug name rediscovery and final audible key/pad confirmation
-  remain pending. Continue routing, reconnect, soak and loaded power checks.
+1. Visually check amber MIDI pulse, green host MIDI state and routing across
+   multiple cables with attached instruments.
+2. Physically reconnect devices and verify rediscovery, routing and soak behavior.
+3. Verify standalone power with the chosen supply and loaded hub/device setup.
+
+## Constraints and pinned dependencies
+
+- Ordered routing preserves MIDI channels, selects destination cables and uses
+  all/drop fallback. Global action 3 excludes one remembered cable both ways
+  before ordered rules.
+- Host wiring uses GPIO14/15 and a four-pin breakout labeled V, D−, D+ and G.
+  Pin mapping, CC behavior, production host VBUS, protection and loaded power
+  limits remain subject to hardware verification.
 - Shared pid.codes ID `1209:0001` is for private in-house tests, may collide,
-  and must not be used on redistributed, sold or manufactured devices. The
-  production identity is unallocated; candidate paths are a pid.codes open
-  project request and Raspberry Pi's RP2040 silicon PID application.
-
-## Pinned firmware dependencies
+  and must not be distributed on firmware or devices. Production identity is
+  unallocated; candidate paths are pid.codes and Raspberry Pi silicon PID.
 
 | Dependency | Pinned revision |
 | --- | --- |
@@ -75,3 +68,4 @@ Final audible key/pad confirmation is still pending.
 | TinyUSB | 0.21.0, SHA-256 `b7cdf35c5ccefb0f61640aff94a732ab4ebcb21498201e4a161545891b23ba01` |
 | Pico-PIO-USB | 0.7.3, `b186e36bea0f3bcc2ee94ca1fa81e7f71281443a` |
 | ARM GCC, picotool | 12.2.1, 2.2.0 |
+| littlefs | 2.11.3, `6cb4e86540eca0d9ba62500a298385c9d863c8be` |

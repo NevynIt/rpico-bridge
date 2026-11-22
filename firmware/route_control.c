@@ -6,6 +6,7 @@
 #include "cdc_bench.h"
 #include "route_policy.h"
 #include "route_store.h"
+#include "led_config.h"
 #include "third_party/embedded-cli/embedded_cli.h"
 #include "usb_bridge.h"
 
@@ -26,6 +27,8 @@ static bridge_t *active_bridge;
 static route_policy_t staged_policy;
 static bool transaction_active;
 static bool transaction_poisoned;
+static led_config_t staged_led_config;
+static bool led_transaction_active;
 static response_queue_t responses;
 static get_state_t get_state;
 static uint8_t get_device_id;
@@ -73,6 +76,69 @@ static bool parse_u8(const char *text, uint8_t *value)
     }
     *value = (uint8_t)result;
     return true;
+}
+
+static bool parse_u16(const char *text, uint16_t *value)
+{
+    if (text == NULL || *text == '\0' || value == NULL) return false;
+    uint32_t result = 0;
+    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+        if (*cursor < '0' || *cursor > '9') return false;
+        result = result * 10u + (uint32_t)(*cursor - '0');
+        if (result > UINT16_MAX) return false;
+    }
+    *value = (uint16_t)result;
+    return true;
+}
+
+static int hex_digit(char character)
+{
+    if (character >= '0' && character <= '9') return character - '0';
+    if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+    if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+    return -1;
+}
+
+static bool parse_rgb(const char *text, uint8_t rgb[3])
+{
+    if (text == NULL || strlen(text) != 6u) return false;
+    for (uint8_t index = 0; index < 3u; ++index) {
+        int high = hex_digit(text[index * 2u]);
+        int low = hex_digit(text[index * 2u + 1u]);
+        if (high < 0 || low < 0) return false;
+        rgb[index] = (uint8_t)((high << 4) | low);
+    }
+    return true;
+}
+
+static void format_rgb(char output[7], const uint8_t rgb[3])
+{
+    static const char hex[] = "0123456789ABCDEF";
+    for (uint8_t index = 0; index < 3u; ++index) {
+        output[index * 2u] = hex[rgb[index] >> 4u];
+        output[index * 2u + 1u] = hex[rgb[index] & 0x0fu];
+    }
+    output[6] = '\0';
+}
+
+static const char *led_color_name(uint8_t index)
+{
+    static const char *const names[LED_CONFIG_COLOR_COUNT] = {
+        "ready", "hub", "midi", "mouse", "traffic", "bootsel", "error"
+    };
+    return names[index];
+}
+
+static bool led_color_index(const char *name, uint8_t *index)
+{
+    if (name == NULL || index == NULL) return false;
+    for (uint8_t candidate = 0; candidate < LED_CONFIG_COLOR_COUNT; ++candidate) {
+        if (strcmp(name, led_color_name(candidate)) == 0) {
+            *index = candidate;
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool parse_rule(const char *line, route_rule_t *rule)
@@ -175,6 +241,75 @@ static void abort_policy(void)
     transaction_active = false;
     transaction_poisoned = false;
     memset(&staged_policy, 0, sizeof(staged_policy));
+}
+
+static bool parse_led_set(char *command, led_config_t *config)
+{
+    char *tokens[13];
+    uint8_t count = 0;
+    char *token = strtok(command, " ");
+    while (token != NULL) {
+        if (count == sizeof(tokens) / sizeof(tokens[0])) return false;
+        tokens[count++] = token;
+        token = strtok(NULL, " ");
+    }
+    if (count != 13u || strcmp(tokens[0], "R") != 0 ||
+        strcmp(tokens[1], "LED") != 0 || strcmp(tokens[2], "SET") != 0) {
+        return false;
+    }
+
+    if (!parse_u16(tokens[3], &config->midi_pulse_ms) ||
+        !parse_u16(tokens[4], &config->mouse_phase_ms) ||
+        !parse_u16(tokens[5], &config->mouse_hold_ms)) {
+        return false;
+    }
+    for (uint8_t index = 0; index < LED_CONFIG_COLOR_COUNT; ++index) {
+        if (!parse_rgb(tokens[6u + index], config->rgb[index])) return false;
+    }
+    return led_config_validate(config);
+}
+
+static bool make_led_get_line(char *line, size_t capacity)
+{
+    const led_config_t *config = route_store_led();
+    char colors[LED_CONFIG_COLOR_COUNT][7];
+    for (uint8_t index = 0; index < LED_CONFIG_COLOR_COUNT; ++index) {
+        format_rgb(colors[index], config->rgb[index]);
+    }
+    int length = snprintf(line, capacity,
+                          "R LED %u %u %u %s %s %s %s %s %s %s",
+                          config->midi_pulse_ms, config->mouse_phase_ms,
+                          config->mouse_hold_ms, colors[0], colors[1], colors[2],
+                          colors[3], colors[4], colors[5], colors[6]);
+    return length > 0 && (size_t)length < capacity;
+}
+
+static void handle_led_command(char *command)
+{
+    if (strcmp(command, "R LED GET") == 0) {
+        if (get_state != GET_IDLE) {
+            response_error("busy");
+            return;
+        }
+        char line[RESPONSE_LINE_SIZE];
+        if (make_led_get_line(line, sizeof(line))) (void)response_push(line);
+        else response_error("led");
+        return;
+    }
+
+    if (strncmp(command, "R LED SET ", 10u) == 0) {
+        led_config_t candidate;
+        if (!parse_led_set(command, &candidate)) {
+            response_error("led");
+        } else if (!route_store_save_led(&candidate)) {
+            response_error(route_store_last_error());
+        } else {
+            (void)response_push("R OK");
+        }
+        return;
+    }
+
+    response_error("led");
 }
 
 static bool enqueue_human_char(char character)
@@ -422,6 +557,102 @@ static void on_abort(EmbeddedCli *embedded_cli, char *args, void *context)
     cli_print("Staged configuration discarded.");
 }
 
+static const led_config_t *led_staged_or_saved(void)
+{
+    return led_transaction_active ? &staged_led_config : route_store_led();
+}
+
+static led_config_t *led_begin_stage(void)
+{
+    if (!led_transaction_active) {
+        staged_led_config = *route_store_led();
+        led_transaction_active = true;
+    }
+    return &staged_led_config;
+}
+
+static void on_led(EmbeddedCli *embedded_cli, char *args, void *context)
+{
+    (void)embedded_cli;
+    (void)context;
+    uint16_t count = embeddedCliGetTokenCount(args);
+    if (count == 0u) {
+        const led_config_t *config = led_staged_or_saved();
+        char line[80];
+        (void)snprintf(line, sizeof(line), "LED timing midi=%u ms mouse-phase=%u ms mouse-hold=%u ms%s",
+                       config->midi_pulse_ms, config->mouse_phase_ms,
+                       config->mouse_hold_ms,
+                       led_transaction_active ? " (staged)" : "");
+        cli_print(line);
+        for (uint8_t index = 0; index < LED_CONFIG_COLOR_COUNT; ++index) {
+            char color[7];
+            format_rgb(color, config->rgb[index]);
+            (void)snprintf(line, sizeof(line), "LED %s #%s", led_color_name(index), color);
+            cli_print(line);
+        }
+        return;
+    }
+
+    if (count == 3u && strcmp(embeddedCliGetToken(args, 1u), "color") == 0) {
+        uint8_t index;
+        uint8_t rgb[3];
+        if (!led_color_index(embeddedCliGetToken(args, 2u), &index) ||
+            !parse_rgb(embeddedCliGetToken(args, 3u), rgb)) {
+            cli_print("Usage: led color ready|hub|midi|mouse|traffic|bootsel|error RRGGBB");
+            return;
+        }
+        led_config_t candidate = *led_staged_or_saved();
+        memcpy(candidate.rgb[index], rgb, sizeof(rgb));
+        *led_begin_stage() = candidate;
+        cli_print("LED color staged. Use led save to persist it.");
+        return;
+    }
+
+    if (count == 4u && strcmp(embeddedCliGetToken(args, 1u), "timing") == 0) {
+        led_config_t candidate = *led_staged_or_saved();
+        if (!parse_u16(embeddedCliGetToken(args, 2u), &candidate.midi_pulse_ms) ||
+            !parse_u16(embeddedCliGetToken(args, 3u), &candidate.mouse_phase_ms) ||
+            !parse_u16(embeddedCliGetToken(args, 4u), &candidate.mouse_hold_ms) ||
+            !led_config_validate(&candidate)) {
+            cli_print("Usage: led timing MIDI_PULSE_MS MOUSE_PHASE_MS MOUSE_HOLD_MS");
+            cli_print("Ranges: pulse 2..100, phase 10..1000, hold phase..5000.");
+            return;
+        }
+        *led_begin_stage() = candidate;
+        cli_print("LED timing staged. Use led save to persist it.");
+        return;
+    }
+
+    if (count == 1u && strcmp(embeddedCliGetToken(args, 1u), "defaults") == 0) {
+        led_config_default(led_begin_stage());
+        cli_print("Default LED settings staged. Use led save to persist them.");
+        return;
+    }
+
+    if (count == 1u && strcmp(embeddedCliGetToken(args, 1u), "save") == 0) {
+        if (!led_transaction_active) {
+            cli_print("No staged LED settings.");
+        } else if (route_store_save_led(&staged_led_config)) {
+            led_transaction_active = false;
+            cli_print("LED settings saved and active.");
+        } else {
+            cli_print("LED save failed (");
+            cli_print(route_store_last_error());
+            cli_print("). Staged settings retained.");
+        }
+        return;
+    }
+
+    if (count == 1u && strcmp(embeddedCliGetToken(args, 1u), "abort") == 0) {
+        led_transaction_active = false;
+        memset(&staged_led_config, 0, sizeof(staged_led_config));
+        cli_print("Staged LED settings discarded.");
+        return;
+    }
+
+    cli_print("Usage: led [color NAME RRGGBB|timing PULSE PHASE HOLD|defaults|save|abort]");
+}
+
 static void on_bootsel(EmbeddedCli *embedded_cli, char *args, void *context)
 {
     (void)embedded_cli; (void)args; (void)context;
@@ -436,7 +667,7 @@ static bool cli_initialize(void)
     config->rxBufferSize = 128u;
     config->cmdBufferSize = 96u;
     config->historyBufferSize = 192u;
-    config->maxBindingCount = 8u;
+    config->maxBindingCount = 16u;
     config->cliBuffer = cli_storage;
     config->cliBufferSize = sizeof(cli_storage);
     config->enableAutoComplete = false;
@@ -453,6 +684,7 @@ static bool cli_initialize(void)
         {"rule", "rule SOURCE CABLE CHANNEL all|drop|to [DEST CABLE]; or DEVICE CABLE any exclude", true, NULL, on_rule},
         {"save", "Validate, persist and activate the staged rules.", true, NULL, on_save},
         {"abort", "Discard the staged edit.", true, NULL, on_abort},
+        {"led", "Show, stage, save or discard status LED settings.", true, NULL, on_led},
         {"bootsel", "Reboot into the RP2040 USB bootloader.", true, NULL, on_bootsel},
     };
     for (size_t i = 0; i < sizeof(bindings) / sizeof(bindings[0]); ++i) {
@@ -472,6 +704,8 @@ void route_control_reset_session(void)
     transaction_active = false;
     transaction_poisoned = false;
     memset(&staged_policy, 0, sizeof(staged_policy));
+    led_transaction_active = false;
+    memset(&staged_led_config, 0, sizeof(staged_led_config));
     responses.head = 0;
     responses.count = 0;
     get_state = GET_IDLE;
@@ -503,6 +737,11 @@ void route_control_feed_line(const char *line, uint8_t length)
     char command[RESPONSE_LINE_SIZE];
     memcpy(command, line, length);
     command[length] = '\0';
+
+    if (strncmp(command, "R LED", 5u) == 0) {
+        handle_led_command(command);
+        return;
+    }
 
     if (strcmp(command, "R GET") == 0) {
         if (get_state != GET_IDLE || transaction_active) response_error("busy");

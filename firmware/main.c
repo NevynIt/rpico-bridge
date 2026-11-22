@@ -10,6 +10,7 @@
 #include "cdc_bench.h"
 #include "route_control.h"
 #include "route_store.h"
+#include "led_config.h"
 #if !defined(RPICO_CDC_BENCH)
 #include "tusb.h"
 #include "usb_host_hid.h"
@@ -17,10 +18,9 @@
 
 static bridge_t bridge;
 
-#define LED_UPDATE_INTERVAL_MS 10u
-#define MIDI_ACTIVITY_WINDOW_MS 1500u
-#define MIDI_ACTIVITY_HALF_PERIOD_MS 250u
+#define LED_UPDATE_INTERVAL_MS 1u
 
+#if !defined(RPICO_CDC_BENCH)
 typedef struct {
     uint32_t events_seen;
     uint32_t active_until_ms;
@@ -28,8 +28,11 @@ typedef struct {
     bool active;
     bool phase_on;
 } activity_t;
+#endif
 
-static activity_t midi_activity;
+static uint32_t midi_pulse_until_ms;
+static bool midi_pulse_pending;
+static bool midi_pulse_active;
 static uint32_t last_route_activity;
 #if !defined(RPICO_CDC_BENCH)
 static activity_t mouse_activity;
@@ -65,17 +68,19 @@ static unsigned host_interface_count(void)
 #endif
 }
 
-static void update_activity(activity_t *activity, uint32_t event_count,
-                            uint32_t now_ms)
+#if !defined(RPICO_CDC_BENCH)
+static void update_mouse_activity(activity_t *activity, uint32_t event_count,
+                                  uint32_t now_ms, uint16_t phase_ms,
+                                  uint16_t hold_ms)
 {
     if (event_count != activity->events_seen) {
         activity->events_seen = event_count;
         if (!activity->active) {
             activity->phase_on = true;
-            activity->next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
+            activity->next_toggle_ms = now_ms + phase_ms;
         }
         activity->active = true;
-        activity->active_until_ms = now_ms + MIDI_ACTIVITY_WINDOW_MS;
+        activity->active_until_ms = now_ms + hold_ms;
     }
 
     if (activity->active &&
@@ -85,9 +90,10 @@ static void update_activity(activity_t *activity, uint32_t event_count,
     } else if (activity->active &&
                (int32_t)(now_ms - activity->next_toggle_ms) >= 0) {
         activity->phase_on = !activity->phase_on;
-        activity->next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
+        activity->next_toggle_ms = now_ms + phase_ms;
     }
 }
+#endif
 
 static void update_status_led(uint32_t desired_color, uint32_t *displayed_color)
 {
@@ -99,7 +105,7 @@ static void update_status_led(uint32_t desired_color, uint32_t *displayed_color)
     if (*displayed_color) {
         colored_status_led_set_state(false);
         *displayed_color = 0;
-    } else {
+    } else if (desired_color != 0u) {
         colored_status_led_set_on_with_color(desired_color);
         *displayed_color = desired_color;
     }
@@ -127,7 +133,9 @@ int main(void)
     (void)bridge_set_policy(&bridge, route_store_policy());
     route_control_init(&bridge);
     last_route_activity = bridge.packets_received;
-    midi_activity.events_seen = bridge.packets_received;
+    midi_pulse_until_ms = 0u;
+    midi_pulse_pending = false;
+    midi_pulse_active = false;
 #if !defined(RPICO_CDC_BENCH)
     mouse_activity.events_seen = usb_host_hid_activity_count();
 #endif
@@ -136,7 +144,10 @@ int main(void)
     bool led_available = status_led_init();
     if (!usb_available) {
         if (led_available) {
-            colored_status_led_set_on_with_color(PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 0, 0));
+            const led_config_t *led = route_store_led();
+            colored_status_led_set_on_with_color(PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                led->rgb[LED_CONFIG_ERROR][0], led->rgb[LED_CONFIG_ERROR][1],
+                led->rgb[LED_CONFIG_ERROR][2]));
         }
         for (;;) {
             __wfi();
@@ -158,36 +169,60 @@ int main(void)
         last_route_activity = bridge.packets_received;
         route_store_task(now_ms, route_midi_active);
         route_control_task();
-        update_activity(&midi_activity, bridge.packets_received, now_ms);
+        const led_config_t *led = route_store_led();
+        if (route_midi_active) {
+            midi_pulse_pending = true;
+            if (midi_pulse_active && displayed_color == 0u) {
+                midi_pulse_until_ms = now_ms + led->midi_pulse_ms;
+            }
+        }
+        if (midi_pulse_active &&
+            (int32_t)(now_ms - midi_pulse_until_ms) >= 0) {
+            midi_pulse_active = false;
+        }
 #if !defined(RPICO_CDC_BENCH)
-        update_activity(&mouse_activity, usb_host_hid_activity_count(), now_ms);
+        update_mouse_activity(&mouse_activity, usb_host_hid_activity_count(), now_ms,
+                              led->mouse_phase_ms, led->mouse_hold_ms);
 #endif
         if (led_available && (int32_t)(now_ms - next_led_ms) >= 0) {
-            const uint32_t gray = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 12, 12);
-            const uint32_t blue = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 8, 18);
-            const uint32_t green = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 18, 0);
-            const uint32_t amber = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(18, 10, 0);
-#if !defined(RPICO_CDC_BENCH)
-            const uint32_t cyan = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 18, 18);
-#endif
-            uint32_t desired_color = gray;
+            bool show_traffic = false;
+            uint32_t desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                led->rgb[LED_CONFIG_READY][0], led->rgb[LED_CONFIG_READY][1],
+                led->rgb[LED_CONFIG_READY][2]);
             if (configured_hub_count() != 0) {
-                desired_color = blue;
+                desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                    led->rgb[LED_CONFIG_HUB][0], led->rgb[LED_CONFIG_HUB][1],
+                    led->rgb[LED_CONFIG_HUB][2]);
             }
             if (host_interface_count() != 0) {
-                desired_color = green;
+                desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                    led->rgb[LED_CONFIG_MIDI][0], led->rgb[LED_CONFIG_MIDI][1],
+                    led->rgb[LED_CONFIG_MIDI][2]);
             }
-            const uint32_t magenta = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(18, 0, 18);
             if (cdc_bench_bootsel_pending()) {
-                desired_color = magenta;
-            } else if (midi_activity.active) {
-                desired_color = midi_activity.phase_on ? amber : desired_color;
+                desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                    led->rgb[LED_CONFIG_BOOTSEL][0], led->rgb[LED_CONFIG_BOOTSEL][1],
+                    led->rgb[LED_CONFIG_BOOTSEL][2]);
+            } else if (midi_pulse_pending || midi_pulse_active) {
+                show_traffic = true;
+                desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                    led->rgb[LED_CONFIG_TRAFFIC][0], led->rgb[LED_CONFIG_TRAFFIC][1],
+                    led->rgb[LED_CONFIG_TRAFFIC][2]);
 #if !defined(RPICO_CDC_BENCH)
             } else if (mouse_activity.active) {
-                desired_color = mouse_activity.phase_on ? cyan : desired_color;
+                if (mouse_activity.phase_on) {
+                    desired_color = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(
+                        led->rgb[LED_CONFIG_MOUSE][0], led->rgb[LED_CONFIG_MOUSE][1],
+                        led->rgb[LED_CONFIG_MOUSE][2]);
+                }
 #endif
             }
             update_status_led(desired_color, &displayed_color);
+            if (midi_pulse_pending && show_traffic && displayed_color == desired_color) {
+                midi_pulse_pending = false;
+                midi_pulse_active = true;
+                midi_pulse_until_ms = now_ms + led->midi_pulse_ms;
+            }
             next_led_ms = now_ms + LED_UPDATE_INTERVAL_MS;
         }
         if ((int32_t)(now_ms - next_report_ms) >= 0) {

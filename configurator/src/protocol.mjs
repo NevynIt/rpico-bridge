@@ -73,6 +73,69 @@ export function formatMidiBytes(bytes, limit = 256) {
   return omitted > 0 ? `${hex} … +${omitted} bytes` : hex;
 }
 
+export const LED_COLOR_FIELDS = [
+  ['ready', 'Ready'],
+  ['hub', 'Hub'],
+  ['midi', 'MIDI mounted'],
+  ['mouse', 'Mouse'],
+  ['traffic', 'MIDI traffic'],
+  ['bootsel', 'BOOTSEL'],
+  ['error', 'Error'],
+];
+
+export const DEFAULT_LED_SETTINGS = {
+  pulse_ms: 8,
+  phase_ms: 250,
+  hold_ms: 1500,
+  ready: '0C0C0C',
+  hub: '000812',
+  midi: '000300',
+  mouse: '001212',
+  traffic: '120A00',
+  bootsel: '120012',
+  error: '0C0000',
+};
+
+export function validateLedSettings(settings) {
+  if (!Number.isInteger(settings.pulse_ms) || settings.pulse_ms < 2 || settings.pulse_ms > 100) {
+    throw new Error('MIDI pulse must be 2–100 ms.');
+  }
+  if (!Number.isInteger(settings.phase_ms) || settings.phase_ms < 10 || settings.phase_ms > 1000) {
+    throw new Error('Mouse phase must be 10–1000 ms.');
+  }
+  if (!Number.isInteger(settings.hold_ms) || settings.hold_ms < settings.phase_ms || settings.hold_ms > 5000) {
+    throw new Error('Mouse hold must be at least the phase and no more than 5000 ms.');
+  }
+  for (const [field, label] of LED_COLOR_FIELDS) {
+    if (typeof settings[field] !== 'string' || !/^[0-9a-f]{6}$/i.test(settings[field])) {
+      throw new Error(`${label} color must be six hexadecimal digits.`);
+    }
+  }
+}
+
+export function parseLedSettings(line) {
+  const fields = line.trim().split(/\s+/);
+  if (fields.length !== 12 || fields[0] !== 'R' || fields[1] !== 'LED' ||
+      fields.slice(2, 5).some(value => !/^\d+$/.test(value))) {
+    throw new Error('Board returned malformed LED settings.');
+  }
+  const settings = {
+    pulse_ms: Number(fields[2]),
+    phase_ms: Number(fields[3]),
+    hold_ms: Number(fields[4]),
+  };
+  LED_COLOR_FIELDS.forEach(([field], index) => { settings[field] = fields[5 + index].toUpperCase(); });
+  validateLedSettings(settings);
+  return settings;
+}
+
+export function serializeLedSettings(settings) {
+  validateLedSettings(settings);
+  const values = [settings.pulse_ms, settings.phase_ms, settings.hold_ms,
+    ...LED_COLOR_FIELDS.map(([field]) => settings[field].toUpperCase())];
+  return values.join(' ');
+}
+
 export class SerialBridge {
   constructor(port, { onLine = () => {}, onState = () => {} } = {}) {
     this.port = port;
@@ -124,7 +187,7 @@ export class SerialBridge {
       pending.lines.push(line);
       if (pending.lines.length > this.maxLines) pending.reject(new Error('Board response exceeded 512 lines.'));
       else if (line.startsWith('R ERR ')) pending.reject(new Error(line));
-      else if (line === pending.terminator) pending.resolve(line);
+      else if (typeof pending.terminator === 'function' ? pending.terminator(line) : line === pending.terminator) pending.resolve(line);
       else if (line === 'R END' || line === 'R OK') pending.reject(new Error(`Unexpected response terminator ${line}.`));
     }
   }
@@ -135,29 +198,51 @@ export class SerialBridge {
   }
   async commandUntil(command, terminator, timeout = 4000) {
     if (this.pending) throw new Error('Another CDC command is in progress.');
+    let pendingEntry;
+    let timer;
+    const expected = typeof terminator === 'string' ? terminator : `a response to ${command}`;
     const promise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${terminator}.`)), timeout);
-      this.pending = { lines: [], terminator, resolve: value => { clearTimeout(timer); this.pending = null; resolve(value); }, reject: error => { clearTimeout(timer); this.pending = null; reject(error); } };
+      pendingEntry = {
+        lines: [],
+        terminator,
+        resolve: value => { clearTimeout(timer); if (this.pending === pendingEntry) this.pending = null; resolve(value); },
+        reject: error => { clearTimeout(timer); if (this.pending === pendingEntry) this.pending = null; reject(error); },
+      };
+      this.pending = pendingEntry;
+      timer = setTimeout(() => pendingEntry.reject(new Error(`Timed out waiting for ${expected}.`)), timeout);
     });
-    try { await this.write(command); return await promise; }
-    catch (error) { if (this.pending) { this.pending = null; } throw error; }
+    try { await this.write(command); }
+    catch (error) { pendingEntry.reject(error); await promise.catch(() => {}); throw error; }
+    return promise;
+  }
+  async getLedSettings() {
+    const line = await this.commandUntil('R LED GET', value => value.startsWith('R LED '), 1500);
+    return parseLedSettings(line);
+  }
+  async setLedSettings(settings) {
+    const values = serializeLedSettings(settings);
+    await this.commandUntil(`R LED SET ${values}`, 'R OK', 10000);
   }
   async getSnapshot() {
     if (this.pending) throw new Error('Another CDC command is in progress.');
-    const pending = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Timed out waiting for R END.')), 5000);
-      this.pending = { lines: [], terminator: 'R END', resolve: () => {
+    let pendingEntry;
+    let timer;
+    const response = new Promise((resolve, reject) => {
+      pendingEntry = { lines: [], terminator: 'R END', resolve: () => {
         clearTimeout(timer);
-        const lines = this.pending.lines;
-        this.pending = null;
+        const lines = pendingEntry.lines;
+        if (this.pending === pendingEntry) this.pending = null;
         try { resolve(parseSnapshot(lines)); } catch (error) { reject(error); }
-      }, reject: error => { clearTimeout(timer); this.pending = null; reject(error); } };
+      }, reject: error => { clearTimeout(timer); if (this.pending === pendingEntry) this.pending = null; reject(error); } };
+      this.pending = pendingEntry;
+      timer = setTimeout(() => pendingEntry.reject(new Error('Timed out waiting for R END.')), 5000);
     });
-    try { await this.write('R GET'); return await pending; }
-    catch (error) { if (this.pending) this.pending = null; throw error; }
+    try { await this.write('R GET'); }
+    catch (error) { pendingEntry.reject(error); await response.catch(() => {}); throw error; }
+    return response;
   }
   async sendRaw(command) {
-    if (/^R\s+(?:GET|BEGIN|RULE|COMMIT|ABORT)(?:\s|$)/i.test(command)) throw new Error('Route-control commands are managed by the configurator.');
+    if (/^R\s+(?:GET|BEGIN|RULE|COMMIT|ABORT|LED)(?:\s|$)/i.test(command)) throw new Error('Managed bridge commands are sent by the configurator.');
     await this.write(command);
   }
   async applySnapshot(snapshot) {

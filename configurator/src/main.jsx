@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import styles from './style.css';
-import { SerialBridge, parseSnapshot, parseMidiPacket, formatMidiBytes, midiName } from './protocol.mjs';
+import {
+  SerialBridge, parseSnapshot, parseMidiPacket, formatMidiBytes, midiName,
+  LED_COLOR_FIELDS, DEFAULT_LED_SETTINGS, validateLedSettings,
+} from './protocol.mjs';
 
 const h = React.createElement;
 const initial = { default: 0, devices: [], rules: [] };
@@ -25,11 +28,17 @@ function App() {
   const [command, setCommand] = useState('help');
   const [channel, setChannel] = useState(1);
   const [logs, setLogs] = useState(true);
+  const [ledSettings, setLedSettings] = useState({ ...DEFAULT_LED_SETTINGS });
+  const [ledSaved, setLedSaved] = useState(null);
+  const [ledSupported, setLedSupported] = useState(false);
+  const [ledBusy, setLedBusy] = useState(false);
+  const [ledNote, setLedNote] = useState('Connect the board to read its LED settings.');
   const bridge = useRef(null);
   const midiAccess = useRef(null);
   const outputRef = useRef(null);
   const held = useRef(new Map());
   const autoNames = ['USB MIDI 1.0 Bridge', 'rpico-bridge'];
+  const ledDirty = ledSaved !== null && JSON.stringify(ledSettings) !== JSON.stringify(ledSaved);
 
   const addEvent = (origin, bytes) => {
     const detail = parseMidiPacket(bytes);
@@ -106,10 +115,42 @@ function App() {
       await instance.open();
       setSerialNote('Choose a command or type help. Device welcome and help text appear here.');
       await refreshRoutes(instance);
+      await loadLedSettings(instance);
     } catch (error) {
       setSerial(error.message === 'The user aborted a request.' ? 'Disconnected' : 'Error');
       setSerialNote(error.message || 'Could not connect to the board.');
+      setLedBusy(false);
     }
+  }
+  async function loadLedSettings(target) {
+    setLedBusy(true);
+    setLedSupported(false);
+    setLedSaved(null);
+    setLedNote('Reading settings…');
+    try {
+      const settings = await target.getLedSettings();
+      setLedSettings(settings);
+      setLedSaved({ ...settings });
+      setLedSupported(true);
+      setLedNote('Settings loaded. Changes stay local until saved.');
+    } catch (error) {
+      const unavailable = error.message.startsWith('R ERR ') || error.message.includes('Timed out');
+      setLedNote(unavailable
+        ? 'LED settings are unavailable on this firmware. Routing controls remain available.'
+        : `Could not load LED settings. ${error.message}`);
+    } finally { setLedBusy(false); }
+  }
+  async function saveLedSettings() {
+    if (!bridge.current || !ledSupported) return;
+    try {
+      validateLedSettings(ledSettings);
+      setLedBusy(true);
+      setLedNote('Saving settings…');
+      await bridge.current.setLedSettings(ledSettings);
+      setLedSaved({ ...ledSettings });
+      setLedNote('Saved on the board. It may restart; reconnect if CDC disconnects.');
+    } catch (error) { setLedNote(`Save failed. ${error.message}`); }
+    finally { setLedBusy(false); }
   }
   async function disconnectSerial(show = true) {
     const current = bridge.current;
@@ -118,7 +159,7 @@ function App() {
     if (show) setSerial('Disconnected');
   }
   async function refreshRoutes(target = bridge.current) {
-    if (!target || working) return;
+    if (!target || working || ledBusy) return;
     setWorking(true);
     try { setSnapshot(await target.getSnapshot()); setSerialNote('Device inventory and saved route rules loaded.'); }
     catch (error) { setSerialNote(error.message); }
@@ -135,6 +176,7 @@ function App() {
   }
   async function commit() {
     if (!bridge.current) { setSerialNote('Connect to the board before saving rules.'); return; }
+    if (ledBusy) { setSerialNote('Wait for the LED settings request to finish.'); return; }
     if (snapshot.rules.length > 24) { setSerialNote('The board supports up to 24 ordered rules.'); return; }
     setWorking(true);
     try {
@@ -201,7 +243,7 @@ function App() {
     serialNote && h('div', { className: 'notice' }, serialNote),
     h('div', { className: 'grid' },
       h('section', { className: 'panel inventory' },
-        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Connected devices')), h('button', { className: 'icon-button', onClick: () => refreshRoutes(), disabled: working || serial !== 'Connected', title: 'Refresh devices' }, '↻')),
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Connected devices')), h('button', { className: 'icon-button', onClick: () => refreshRoutes(), disabled: working || ledBusy || serial !== 'Connected', title: 'Refresh devices' }, '↻')),
         h('p', { className: 'muted' }, 'Saved identities remain listed while devices are offline.'),
         snapshot.devices.length ? h('div', { className: 'device-list' }, ...snapshot.devices.map(d => h('div', { className: 'device', key: d.id }, h('span', { className: `dot ${d.online ? 'online' : ''}` }), h('div', { className: 'device-name' }, h('strong', null, d.name || `Device ${d.id}`), h('small', null, `ID ${d.id} · ${d.rx_cables} in / ${d.tx_cables} out cables`)), badge(d.online ? 'ONLINE' : 'OFFLINE', d.online ? 'good' : '')))) : h('div', { className: 'empty' }, 'Connect the board to discover remembered MIDI devices.'),
         h('div', { className: 'panel-foot' }, `${snapshot.devices.filter(d => d.online).length} online`, h('span', null, `${snapshot.devices.length} remembered`))),
@@ -217,7 +259,7 @@ function App() {
             line(h('label', null, 'Action', h('select', { value: rule.action, onChange: e => changeRuleAction(i, rule, Number(e.target.value)) }, ...actionNames.map((name, id) => h('option', { key: id, value: id }, name)))), rule.action === 2 && h('label', null, 'Destination', h('select', { value: rule.destination_id, onChange: e => changeRule(i, { destination_id: Number(e.target.value) }) }, h('option', { value: 0 }, 'Choose destination'), h('option', { value: 1 }, 'Native USB'), h('option', { value: 2 }, 'CDC console'), ...snapshot.devices.map(d => h('option', { key: d.id, value: d.id }, d.name || `Device ${d.id}`)))), rule.action === 2 && h('label', null, 'To cable', h('select', { value: rule.destination_cable, onChange: e => changeRule(i, { destination_cable: Number(e.target.value) }) }, h('option', { value: any }, 'Any'), ...Array.from({ length: 16 }, (_, n) => h('option', { key: n, value: n }, String(n))))))),
           h('button', { className: 'remove', onClick: () => setSnapshot(s => ({ ...s, rules: s.rules.filter((_, j) => i !== j) })), title: 'Remove rule' }, '×')))
           : h('div', { className: 'empty compact' }, 'No rules yet. The default action applies to every message.')),
-        h('div', { className: 'rule-actions' }, h('button', { className: 'secondary', onClick: addRule, disabled: snapshot.rules.length >= 24 }, '+ Add rule'), h('button', { className: 'primary', onClick: commit, disabled: working || serial !== 'Connected' }, working ? 'Working…' : 'Save to board'))),
+        h('div', { className: 'rule-actions' }, h('button', { className: 'secondary', onClick: addRule, disabled: snapshot.rules.length >= 24 }, '+ Add rule'), h('button', { className: 'primary', onClick: commit, disabled: working || ledBusy || serial !== 'Connected' }, working ? 'Working…' : 'Save to board'))),
       h('section', { className: 'panel monitor' },
         h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'MIDI monitor')), h('label', { className: 'toggle' }, h('input', { type: 'checkbox', checked: logs, onChange: e => setLogs(e.target.checked) }), 'Capture')),
         h('div', { className: 'midi-selectors' }, h('label', null, 'Input', inputSelect), h('label', null, 'Output / keyboard', outputSelect), h('button', { className: 'secondary', onClick: connectMidi }, midi === 'Connected' ? 'Refresh MIDI' : 'Enable MIDI')),
@@ -229,8 +271,19 @@ function App() {
       h('section', { className: 'panel console' },
         h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Serial console')), h('button', { className: 'text-button', onClick: () => setConsoleLines([]) }, 'Clear')),
         h('div', { className: 'console-body' }, consoleLines.length ? consoleLines.map((text, i) => h('div', { key: i, className: text.startsWith('>') ? 'sent' : text.startsWith('!') ? 'error' : '' }, text)) : h('span', { className: 'console-placeholder' }, 'Connect over CDC to see the welcome message and device responses.')),
-        h('form', { onSubmit: sendCommand, className: 'command-form' }, h('span', null, '›'), h('input', { value: command, onChange: e => setCommand(e.target.value), placeholder: 'Type help or a CDC command', disabled: serial !== 'Connected', 'aria-label': 'CDC command' }), h('button', { type: 'submit', disabled: serial !== 'Connected' }, 'Send')),
-        h('p', { className: 'hint' }, 'Try help, help rule, or help devices.'))),
+        h('form', { onSubmit: sendCommand, className: 'command-form' }, h('span', null, '›'), h('input', { value: command, onChange: e => setCommand(e.target.value), placeholder: 'Type help or a CDC command', disabled: serial !== 'Connected' || ledBusy, 'aria-label': 'CDC command' }), h('button', { type: 'submit', disabled: serial !== 'Connected' || ledBusy }, 'Send')),
+        h('p', { className: 'hint' }, 'Try help, help rule, or help devices.')),
+      h('section', { className: 'panel led-panel' },
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Status LED')), badge(ledBusy ? 'Working' : ledSupported ? (ledDirty ? 'Unsaved changes' : 'Saved on board') : 'Not loaded', ledDirty ? '' : 'count')),
+        h('p', { className: 'muted' }, 'Edit the status colors and activity timings, then save once. The board may restart after saving.'),
+        h('p', { className: 'led-note', role: 'status', 'aria-live': 'polite' }, ledNote),
+        h('div', { className: 'led-timings' },
+          h('label', null, 'MIDI pulse (ms)', h('input', { type: 'number', min: 2, max: 100, step: 1, value: ledSettings.pulse_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, pulse_ms: Number(e.target.value) })) })),
+          h('label', null, 'Mouse phase (ms)', h('input', { type: 'number', min: 10, max: 1000, step: 1, value: ledSettings.phase_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, phase_ms: Number(e.target.value) })) })),
+          h('label', null, 'Mouse hold (ms)', h('input', { type: 'number', min: 10, max: 5000, step: 1, value: ledSettings.hold_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, hold_ms: Number(e.target.value) })) }))),
+        h('div', { className: 'led-colors' }, ...LED_COLOR_FIELDS.map(([field, label]) => h('label', { key: field }, label, h('input', { type: 'color', value: `#${ledSettings[field]}`, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, [field]: e.target.value.slice(1).toUpperCase() })) }), h('code', null, ledSettings[field])))),
+        h('div', { className: 'led-actions' }, h('button', { className: 'primary', onClick: saveLedSettings, disabled: serial !== 'Connected' || !ledSupported || ledBusy || !ledDirty }, ledBusy ? 'Working…' : 'Save LED settings'))),
+    ),
     h('footer', null, h('span', null, 'rpico-bridge · local-only configurator'), h('span', null, 'No server or cloud connection required')));
 }
 

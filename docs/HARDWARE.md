@@ -38,7 +38,8 @@ The production host port still needs a defined 5 V source, current limiting and 
 The native USB-C check can start with the host adapter disconnected. Flash
 the board as described in [README.md](../README.md#flash), plug native USB-C into
 the computer, and check for one MIDI 1.0 port and one CDC serial port. Open CDC
-and check for `host=0`. The LED should be blue. Send a MIDI note to the bridge
+and check for `host=0`. The LED color is configurable; record its current
+setting rather than assuming a fixed color. Send a MIDI note to the bridge
 from the computer and check that `rx` increases while `tx` stays at zero.
 Press **RESET** and verify both interfaces return.
 Record the firmware commit, operating system and results.
@@ -60,7 +61,7 @@ computer with its stock cable. On Linux, `lsusb -t` lists the hub nodes and
 devices below them. Record the hub, MIDI devices and power connections used.
 
 1. Connect two or more MIDI devices through the hub and check that CDC reports
-   the expected number of MIDI interfaces. Verify the LED turns green.
+   the expected number of MIDI interfaces. Record the configured LED response.
 2. Send notes and control changes from each input. Check channel, data bytes and
    delivery to every other logical port. Exercise both cables on a multi-cable
    device and confirm that the originating port receives no echo.

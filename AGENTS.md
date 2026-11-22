@@ -43,11 +43,13 @@ affect safety or purchasing. Keep documentation to this file, README,
   back to its origin. Preserve traffic ordering where the protocol requires it.
 - Prefer bounded queues with explicit overflow behavior and no realtime allocation.
   Keep CDC diagnostics nonblocking. Define core/IRQ ownership of shared state.
-- Before SDK flash writes for policy or catalog updates, pause MIDI routing and
-  stop the PIO host timer. Mask the native CDC IRQ during the flash operation.
-  A successful save with an attached PIO host is expected to reboot and
-  re-enumerate the host-side devices. Acknowledge explicit commits only after
-  durable flash verification.
+- Before policy, catalog or LED-settings flash writes, pause MIDI routing and
+  cancel the application-owned PIO host timer. Use SDK `flash_safe_execute` so
+  IRQs are masked during flash and the other core is safe. Keep the core 1
+  unused assumption explicit for this single-core firmware. A successful save
+  with an attached PIO host reboots and re-enumerates the host devices.
+  Acknowledge commits only after durable flash verification. Preserve the
+  littlefs migration path from legacy policy and catalog records.
 - Verify host and device USB together before claiming dual-interface operation.
   Label evidence as compiled, simulated, or physically tested. Hardware acceptance
   requires the actual board, hub and multiple MIDI devices.

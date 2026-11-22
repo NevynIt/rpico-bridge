@@ -1,9 +1,11 @@
 # Project state
 
-**Prototype status — flash verified, application runtime unverified.** Native
-routing checks and compiled firmware evidence are recorded below. Application
-enumeration, MIDI+CDC operation, host adapter wiring and full hub bench operation
-remain unverified. This is development firmware, not a release for distribution.
+**Prototype status — native USB and MIDI ingress verified.** The board
+enumerated over native USB-C, CDC diagnostics responded, and MIDI ingress was
+confirmed with no host destinations. The onboard LED was blue. Forwarding, the
+PIO host adapter and standalone power remain unverified. Hardware RESET
+recovery of native enumeration is verified. This is development firmware, not a
+release for distribution.
 
 ## Verification evidence
 
@@ -15,15 +17,24 @@ remain unverified. This is development firmware, not a release for distribution.
   and data, plus USB Audio Control and MIDI Streaming. MIDI Streaming advertises
   one cable in each direction. The rebuilt image's descriptors use VID/PID
   `1209:0001`.
-- WSL 2 USB/IP and sysfs previously enumerated BOOTSEL as `2e8a:0003` (`RP2
-  Boot`). Approved `picotool` later identified RP2040 revision B2, loaded the
-  bench UF2 (`e4cfb88f15362c98bb20d90decc4d8a23b81702497a3a49e7bba3570f78dc045`),
+- WSL 2 USB/IP and sysfs first enumerated BOOTSEL as `2e8a:0003` (`RP2 Boot`).
+  Approved `picotool` identified RP2040 revision B2, loaded the bench UF2
+  (`e4cfb88f15362c98bb20d90decc4d8a23b81702497a3a49e7bba3570f78dc045`),
   verified flash OK and requested an application reboot.
-- BOOTSEL disconnected after reboot. Application PID `1209:0001` did not appear
-  in sysfs or approved `lsusb`. CDC and ALSA device nodes were absent.
-  Application enumeration and runtime remain pending. The owner was asked to
-  look for the new Windows device, reattach or remap it, and report any LED
-  status. The verified result remains successful flash verification only.
+- Approved elevated `lsusb` later showed application PID `1209:0001` with
+  product `USB MIDI 1.0 Bridge`. It enumerated CDC ACM control/data and USB Audio
+  Control/MIDI Streaming interfaces, with one embedded MIDI jack per direction.
+- With only native USB-C connected, CDC DTR and reads returned
+  `midi host=0 rx=0 tx=0 drops=0 invalid=0`. A Note On and matching Note Off
+  sent to native MIDI OUT each transferred 4 bytes. CDC then reported
+  `midi host=0 rx=2 tx=0 drops=0 invalid=0`. This verifies CDC diagnostics and
+  MIDI ingress with no host destinations. MIDI forwarding remains unverified.
+  Linux drivers rebound after DTR cleared. The owner confirmed the onboard LED
+  was blue, then pressed RESET. Sysfs briefly lost the device and saw it
+  re-enumerate as bus 1 device 4, with the same product, VID/PID and four CDC/MIDI
+  interface numbers and classes as bus 1 device 3. This verifies hardware RESET
+  recovery of native USB enumeration. The owner reported the LED seemed
+  uninterrupted.
 
 ## Current design and constraints
 
@@ -35,11 +46,9 @@ remain unverified. This is development firmware, not a release for distribution.
   tagged with its local cable number. The source logical cable is excluded.
   Output queues are bounded; congestion may drop packets or abort a SysEx stream
   on the affected output while other outputs continue.
-- Prototype host data pins are GPIO14/15. The first physical test should use
-  only the board and a computer to check native USB; it does not depend on the
-  host breakout. The hardware owner reports a four-pin breakout, but exact pin
-  labels are unconfirmed. The host adapter and full powered-hub bench have not
-  been verified.
+- Prototype host data pins are GPIO14/15. The hardware owner reports a four-pin
+  breakout, but exact pin labels are unconfirmed. The host adapter and full
+  powered-hub bench have not been verified.
 - Board power is intended to come from native USB-C, supplied by a computer or
   an externally powered hub. USB-C breakout pinout, CC configuration, protected
   host 5 V feed and backfeed behavior remain open hardware checks.
@@ -64,8 +73,7 @@ remain unverified. This is development firmware, not a release for distribution.
 
 ## Next tasks
 
-1. When hardware is available, test native USB with only the board and a
-   computer; record enumeration, blue LED, `host=0` and expected RX counter.
-2. Identify breakout pin labels and confirm the host adapter and power design.
-3. Validate hub operation with multiple devices and standalone power using the
-   acceptance steps in [HARDWARE.md](HARDWARE.md).
+1. Identify breakout pin labels and confirm host wiring and 5 V power design.
+2. Verify PIO host enumeration with the hub and MIDI devices.
+3. Test downstream routing, reconnect and soak behavior, plus standalone power,
+   using the acceptance steps in [HARDWARE.md](HARDWARE.md).

@@ -9,14 +9,15 @@
 #include "pico/status_led.h"
 #include "cdc_bench.h"
 #if !defined(RPICO_CDC_BENCH)
+#include "tusb.h"
 #include "usb_host_hid.h"
 #endif
 
 static bridge_t bridge;
 
 #define LED_UPDATE_INTERVAL_MS 10u
-#define MIDI_ACTIVITY_WINDOW_MS 240u
-#define MIDI_ACTIVITY_HALF_PERIOD_MS 60u
+#define MIDI_ACTIVITY_WINDOW_MS 1500u
+#define MIDI_ACTIVITY_HALF_PERIOD_MS 250u
 
 typedef struct {
     uint32_t events_seen;
@@ -30,6 +31,20 @@ static activity_t midi_activity;
 #if !defined(RPICO_CDC_BENCH)
 static activity_t mouse_activity;
 #endif
+
+static unsigned configured_hub_count(void)
+{
+#if !defined(RPICO_CDC_BENCH)
+    unsigned count = 0;
+    for (uint8_t address = CFG_TUH_DEVICE_MAX + 1u;
+         address <= CFG_TUH_DEVICE_MAX + CFG_TUH_HUB; ++address) {
+        count += tuh_mounted(address);
+    }
+    return count;
+#else
+    return 0;
+#endif
+}
 
 static unsigned host_interface_count(void)
 {
@@ -137,14 +152,21 @@ int main(void)
         update_activity(&mouse_activity, usb_host_hid_activity_count(), now_ms);
 #endif
         if (led_available && (int32_t)(now_ms - next_led_ms) >= 0) {
-            const uint32_t blue = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 0, 12);
-            const uint32_t green = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 12, 0);
-            const uint32_t amber = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 6, 0);
+            const uint32_t gray = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 12, 12);
+            const uint32_t blue = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 8, 18);
+            const uint32_t green = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 18, 0);
+            const uint32_t amber = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(18, 10, 0);
 #if !defined(RPICO_CDC_BENCH)
-            const uint32_t cyan = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 12, 12);
+            const uint32_t cyan = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 18, 18);
 #endif
-            uint32_t desired_color = host_interface_count() ? green : blue;
-            const uint32_t magenta = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 0, 12);
+            uint32_t desired_color = gray;
+            if (configured_hub_count() != 0) {
+                desired_color = blue;
+            }
+            if (host_interface_count() != 0) {
+                desired_color = green;
+            }
+            const uint32_t magenta = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(18, 0, 18);
             if (cdc_bench_bootsel_pending()) {
                 desired_color = magenta;
             } else if (midi_activity.active) {

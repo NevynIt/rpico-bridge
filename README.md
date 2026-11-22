@@ -38,11 +38,11 @@ cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 ```
 
-Clean-clone default and CDC bench UF2 hashes matched. Normal, bench and isolated
-Release builds were warning-free. Native and ASan/UBSan Debug suites each passed
-2/2, with LeakSanitizer disabled.
+Normal and bench Release builds were warning-free. Native CTest passed 2/2.
+Earlier clean-clone default and bench UF2 hashes matched, and ASan/UBSan Debug
+CTest passed 2/2 with LeakSanitizer disabled.
 
-## CDC-only bench mode
+## CDC test peer and bench mode
 
 All firmware images provide CDC diagnostics, a MIDI test peer, and the
 `BOOTSEL\n` command when DTR is asserted. The peer injects and monitors cable-zero
@@ -63,12 +63,10 @@ cmake -S . -B build-cdc-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_CDC_BE
 cmake --build build-cdc-bench
 ```
 
-The CDC bench UF2 passed flash verification and re-enumerated as `1209:0001`
-with the same product. Earlier bench images entered ROM without buttons using
-`BOOTSEL\n`. The final regular UF2 was verified and physically passed five MIDI
-packets in each direction without echo. Its `BOOTSEL\n` command entered ROM
-without buttons. The same UF2 was reloaded and the app re-enumerated. The Pico
-currently runs the final regular image with the hub disconnected.
+Earlier bench images entered ROM without buttons using `BOOTSEL\n`. Final
+regular UF2 `e288af09…aa9fb` was flashed and verified, then enumerated as
+`1209:0001` on bus 1 device 24 after software BOOTSEL. The Pico currently runs
+this image with the hub disconnected.
 
 After asserting CDC DTR, write packets as `M <8 hex digits>\n` to inject them
 from the CDC peer. Native USB-MIDI packets routed to CDC are printed in the same
@@ -83,29 +81,90 @@ numbers from `lsusb` and give the current user read and write permission.
 python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>
 ```
 
-The run passed five packets in each direction, including Note On/Off, SysEx
-start/end and realtime clock. Neither source received an echo. The harness
-restored Linux driver bindings after the run. The hub was disconnected for this
-regular-image run.
+The prior bench run passed five packets in each direction, including Note
+On/Off, SysEx start/end and realtime clock. Neither source received an echo. The
+harness restored Linux driver bindings. The final regular image also passed five
+packets each way without echo with the hub disconnected, then restored Linux
+CDC/MIDI bindings on bus 1 device 24.
 With CDC DTR asserted, `BOOTSEL\n` requests bootloader entry in every firmware
 image after about 200 ms of magenta. The final regular image physically entered
-ROM without buttons and then reflashed successfully. The magenta hue and timing
-were not independently distinguished. Hardware BOOT/RESET bypasses firmware.
+ROM without buttons. The magenta hue and timing were not independently
+distinguished. Hardware BOOT/RESET bypasses firmware.
 
-Regular firmware implements solid blue when ready with no host MIDI, green when
-a host MIDI interface is attached, cyan on recognized mouse reports, amber on
-received MIDI, and red on initialization failure. HID mouse handling only
-observes reports. It does not route native pointer input or add controls. The
-diagnostic image stays green after hub configuration and turns cyan on mouse
-reports. Green idle and cyan on mouse movement were visually confirmed on the
-temporary image with one HID receiver through the small hub on an isolated wall
-charger. On the final regular image the user saw blue and activity flashes. The
-rapid hues were hard to distinguish.
+The installed palette is gray for ready, blue after the hub accepts
+`SET_CONFIGURATION`, green for a host MIDI interface, cyan for recognized mouse
+reports, amber for received MIDI, magenta for about 200 ms before BOOTSEL, and
+red for initialization failure. Blue confirms configuration acceptance, not
+class readiness. Amber pulses at a 250 ms half-period for 1.5 seconds after
+activity. A temporary image showed green idle and cyan on mouse movement with
+one HID receiver through the small hub and wall charger. An earlier regular
+image showed blue and activity flashes, though the user found rapid hues hard to
+distinguish. HID handling only observes reports. It does not route native
+pointer input or add controls. Hardware BOOT/RESET bypasses the palette.
+
+## OS MIDI logger and sender
+
+Install the pinned Python backend and list OS MIDI ports. Use `python3` on
+Linux/macOS or `python` on Windows:
+
+```sh
+python3 -m pip install -r tools/requirements.txt
+python3 tools/midi_log.py ports
+```
+
+`python-rtmidi` is pinned to 1.5.8. The tool prefers a unique port matching the
+bridge product name. Port indexes printed by `ports` are zero-based. Specify an
+index when multiple matching ports appear.
+
+Monitor the bridge input. Add `--port-index N` when selecting an explicit
+zero-based input. Add `--log-file "PATH"` to append timestamped records:
+
+```sh
+python3 tools/midi_log.py monitor --log-file "bridge-midi.log"
+python3 tools/midi_log.py monitor --port-index 0
+```
+
+SysEx, realtime messages and active sensing are included by default. Monitoring
+only reads and logs. It never sends messages back through the port. OS MIDI
+exposes one merged bridge port without per-source labels.
+
+Send a note pair with optional channel, velocity and duration settings, or send
+one complete MIDI message:
+
+```sh
+python3 tools/midi_log.py send --note 60 --channel 1 --velocity 80 --hold-ms 250
+python3 tools/midi_log.py send --hex "90 3C 64"
+```
+
+The note command sends Note On and then Note Off. Hex messages accept forms such
+as `90 3C 64` or `F8`.
+
+For a short two-device check, connect two USB MIDI devices through the verified
+PIO host wiring, then connect the bridge's native USB-C data port to the laptop.
+This simultaneous setup requires verified wiring. Run `ports`, start `monitor`
+on the bridge input, and play each device. Confirm the other device responds
+and the monitor logs the traffic. From a second terminal, send a note to the
+bridge output and confirm both devices respond. A power-only native USB
+connection can run standalone automation but cannot carry OS logger data.
+
+The Python I/O tests passed with a fake backend, including SysEx, MIDI Clock,
+Active Sensing, explicit sends, Note Off and cleanup on interruption. The
+container has no ALSA sequencer, so no live OS MIDI application test has run.
+Windows and macOS have not been tested.
 
 ## Flash
 
-Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts. A native USB-only bench confirmed a blue LED and CDC diagnostics reporting `host=0`. Sending Note On and Note Off to native MIDI OUT increased the RX count from 0 to 2. An empty bus-powered USB-C hub was configured through the four-pin breakout with the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green was observed. No CDC capture was made while standalone. Downstream MIDI devices and an externally powered hub remain untested. This fixed setup does not establish production VBUS or standalone power requirements.
-Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts. A native USB-only bench confirmed a blue LED and CDC diagnostics reporting `host=0`. Sending Note On and Note Off to native MIDI OUT increased the RX count from 0 to 2. An empty bus-powered USB-C hub was configured through the four-pin breakout with the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green was observed. No CDC capture was made while standalone. The USB descriptor announces 100 mA. Combined charger draw is unmeasured, and a laptop-powered experimental hub cascade has not been tested. Downstream MIDI devices and an externally powered hub remain untested. This fixed setup does not establish loaded standalone power or production VBUS requirements.
+Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts.
+
+A native USB-only bench confirmed a blue LED and CDC diagnostics reporting
+`host=0`. Sending Note On and Note Off to native MIDI OUT increased RX from 0 to
+2. An empty bus-powered USB-C hub was configured through the four-pin breakout with
+the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green
+was observed. No CDC capture was made in this setup. The USB descriptor announces
+100 mA. Combined charger draw is unmeasured, and a laptop-powered experimental
+hub cascade has not been tested. No downstream MIDI device or externally powered
+hub was tested. This does not validate loaded standalone power or production VBUS
+requirements.
 
 Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may use it in their own private, in-house tests, but it may collide with other test devices. Do not distribute this firmware or use this ID on devices that will be redistributed, sold or manufactured; see the [pid.codes test PID terms](https://pid.codes/1209/0001/). See [project state](docs/STATE.md) for production identity status.
 

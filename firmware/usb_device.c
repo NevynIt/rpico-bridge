@@ -3,9 +3,9 @@
 #include "pico/unique_id.h"
 #include "tusb.h"
 
-/* Development identity only. Replace with an assigned VID/PID for releases. */
-#define RPICO_BRIDGE_USB_VID 0xCafe
-#define RPICO_BRIDGE_USB_PID 0x4010
+/* Shared in-house testing ID only; use an assigned project VID/PID for distribution. */
+#define RPICO_BRIDGE_USB_VID 0x1209
+#define RPICO_BRIDGE_USB_PID 0x0001
 
 enum {
     ITF_NUM_CDC = 0,

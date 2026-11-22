@@ -38,7 +38,9 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Flash
 
-Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy `build/rpico_bridge.uf2` to the `RPI-RP2` drive. The drive ejects and the board restarts. For the first hardware check, connect only the board to a computer over native USB. Expect the LED to be blue and the CDC diagnostic to report `host=0`; the RX counter should increase when MIDI reaches the bridge. These physical indications await bench confirmation. The PIO host adapter and powered-hub operation are not yet verified. The development USB VID/PID is for prototype testing; an assigned USB identity is needed for a distributed firmware release. See [project state](docs/STATE.md) for verification status.
+Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy `build/rpico_bridge.uf2` to the `RPI-RP2` drive. The drive ejects and the board restarts. For the first hardware check, connect only the board to a computer over native USB. Expect the LED to be blue and the CDC diagnostic to report `host=0`; the RX counter should increase when MIDI reaches the bridge. These physical indications await bench confirmation. The PIO host adapter and powered-hub operation are not yet verified.
+
+Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may use it in their own private, in-house tests, but it may collide with other test devices. Do not distribute this firmware or use this ID on devices that will be redistributed, sold or manufactured; see the [pid.codes test PID terms](https://pid.codes/1209/0001/). See [project state](docs/STATE.md) for production identity status.
 
 For Windows enumeration tests, leave the device attached to Windows. To test from the container instead, use WSL 2 USB/IP and confirm that Docker's Linux daemon can see the USB device node. Recheck the mapping after switching between BOOTSEL and application mode. [Microsoft WSL USB guide](https://learn.microsoft.com/en-us/windows/wsl/connect-usb)
 

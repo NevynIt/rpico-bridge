@@ -13,7 +13,8 @@ firmware, not a release for distribution.
 - Release UF2 builds from two separate build directories were byte-identical.
 - Independent ELF descriptor verification found four interfaces: CDC control
   and data, plus USB Audio Control and MIDI Streaming. MIDI Streaming advertises
-  one cable in each direction.
+  one cable in each direction. The rebuilt image's descriptors use VID/PID
+  `1209:0001`.
 - No physical USB devices are available in the container, so none of these
   results establish physical host/device interoperability.
 
@@ -35,8 +36,15 @@ firmware, not a release for distribution.
 - Board power is intended to come from native USB-C, supplied by a computer or
   an externally powered hub. USB-C breakout pinout, CC configuration, protected
   host 5 V feed and backfeed behavior remain open hardware checks.
-- USB descriptors use a prototype VID/PID; an assigned identity is required
-  before distributing firmware.
+- Bench builds use the shared pid.codes test identity `1209:0001`. Anyone may
+  use it in their own private, in-house tests; it may collide with other test
+  devices and must not be used in distributed firmware or on devices that are
+  redistributed, sold or manufactured. See the
+  [pid.codes test PID terms](https://pid.codes/1209/0001/).
+- A production identity is not allocated. Candidates for future review are a
+  pid.codes open-project PID request and Raspberry Pi's RP2040 silicon PID
+  application; neither is approved or reserved. See
+  [Raspberry Pi's application](https://github.com/raspberrypi/usb-pid).
 
 ## Pinned firmware dependencies
 

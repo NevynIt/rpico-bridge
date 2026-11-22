@@ -1,12 +1,12 @@
 # rpico-bridge
 
-A USB MIDI 1.0 bridge prototype for the Waveshare RP2040-Zero. The firmware
-includes native MIDI and CDC interfaces, a PIO USB MIDI host and a packet router.
-Its ELF descriptors were verified to expose CDC control/data and USB Audio
+A USB MIDI 1.0 bridge for the Waveshare RP2040-Zero. The firmware includes
+native MIDI and CDC interfaces, a PIO USB host, ordered routing rules and a
+local configurator. Its ELF descriptors expose CDC control/data and USB Audio
 Control/MIDI Streaming interfaces, with one MIDI cable in each direction.
-Native USB was bench-checked. An empty bus-powered hub was configured in one
-isolated charger setup. Downstream MIDI devices and production hub wiring still
-need verification. See
+Native USB was bench-checked on the current image. The user reports two-device
+routing on an earlier image. Production hub wiring and power still need
+verification. See
 [project state](docs/STATE.md) for evidence and [hardware](docs/HARDWARE.md) for
 wiring assumptions and bench steps.
 
@@ -63,10 +63,10 @@ cmake -S . -B build-cdc-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_CDC_BE
 cmake --build build-cdc-bench
 ```
 
-Earlier bench images entered ROM without buttons using `BOOTSEL\n`. Final
-regular UF2 `e288af09…aa9fb` was flashed and verified, then enumerated as
-`1209:0001` on bus 1 device 24 after software BOOTSEL. The Pico currently runs
-this image with the hub disconnected.
+Current regular UF2 `8aedbee5…580e` was installed and enumerates as `1209:0001`
+on bus 1 device 42 with the hub, MicroFreak and APC Key attached. The image
+contains a default-all policy and a global exclusion for APC Key ID 4 cable 1.
+Key and pad audibility on this final configuration is awaiting user confirmation.
 
 After asserting CDC DTR, write packets as `M <8 hex digits>\n` to inject them
 from the CDC peer. Native USB-MIDI packets routed to CDC are printed in the same
@@ -81,13 +81,12 @@ numbers from `lsusb` and give the current user read and write permission.
 python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>
 ```
 
-The prior bench run passed five packets in each direction, including Note
+An earlier bench run passed five packets in each direction, including Note
 On/Off, SysEx start/end and realtime clock. Neither source received an echo. The
-harness restored Linux driver bindings. The final regular image also passed five
-packets each way without echo with the hub disconnected, then restored Linux
-CDC/MIDI bindings on bus 1 device 24.
+harness restored Linux driver bindings. The default image passed the CDC route
+and persistence checks below, then restored Linux CDC/MIDI bindings.
 With CDC DTR asserted, `BOOTSEL\n` requests bootloader entry in every firmware
-image after about 200 ms of magenta. The final regular image physically entered
+image after about 200 ms of magenta. The default image physically entered
 ROM without buttons. The magenta hue and timing were not independently
 distinguished. Hardware BOOT/RESET bypasses firmware.
 
@@ -102,10 +101,163 @@ image showed blue and activity flashes, though the user found rapid hues hard to
 distinguish. HID handling only observes reports. It does not route native
 pointer input or add controls. Hardware BOOT/RESET bypasses the palette.
 
+## Configure routing
+
+Rules are evaluated from top to bottom. The first matching `all`, `drop`, or
+`to` rule wins. A `to` rule selects its destination USB cable independently;
+MIDI channel values stay unchanged. The fallback routes to all other ports or
+drops the message. A separate global cable exclusion removes one remembered
+device cable from the routing graph, both as a source and destination. It takes
+precedence over every ordered rule, and other cables on that device remain
+available. Device names and IDs persist, and devices are discovered
+automatically, including in standalone operation.
+
+Connect to the CDC port with a serial terminal at 115200 baud and assert DTR.
+The board prints a welcome line. Type `help` or `help rule` for command help.
+Use `devices` to see remembered device IDs, online state and cable counts. Use
+`rules` to inspect the active default and ordered rules. To route cable 0 from
+one observed device to another on cable 0 for every channel, while dropping
+unmatched traffic, enter:
+
+```text
+devices
+begin drop
+rule SOURCE_ID 0 any to DESTINATION_ID 0
+rule DESTINATION_ID 0 any to SOURCE_ID 0
+save
+```
+
+Replace both IDs with the numbers printed by `devices`. `save` validates,
+persists and activates the policy. `abort` discards a staged edit. `bootsel`
+requests RP2040 bootloader mode. Cable selectors accept `0` through `15` or
+`any`; channel selectors accept `1` through `16`, `system` or `any`. `begin`
+without an argument uses the `all` fallback. Rule actions are `all`, `drop`, or
+`to DESTINATION CABLE`. To globally exclude one cable on a remembered device,
+use `rule DEVICE CABLE any exclude`. For example, the current local catalog has
+the APC Key 25 mk2 at ID 4; `rule 4 1 any exclude` blocks cable 1 in both
+directions. The Akai protocol assigns the keybed and sustain to cable 0 and
+control messages to cable 1, so this leaves the keyboard and sustain available
+while suppressing that control cable. [Akai APC Key 25 mk2 communications
+protocol, v1.1](https://cdn.inmusicbrands.com/akai/attachments/APC%20Key%2025%20mk2%20-%20Communication%20Protocol%20-%20v1.1.pdf)
+
+The device accepts an exclusion before or after other rules because it applies
+globally. It cannot be overridden by rule order. New rule edits use the CDC
+configurator or CLI; the current firmware image already includes this capability.
+
+The verified default image passed DTR welcome, `help` with CR, `help rule` with
+CRLF, `devices`, same-session `R GET` and malformed-rule rollback. A temporary
+default-drop policy routed channel 1 from CDC to native USB cable 0 without echo
+and dropped channel 2. The saved rule survived software BOOTSEL and picotool
+reboot, and routing passed again. The original default-all/no-rules policy was
+then restored durably. No instruments were attached during this console test.
+
+With a PIO hub attached, harmless ALL-policy save and restore both returned
+durable acknowledgements and rebooted the board. Enumeration advanced through
+bus 1 devices 36, 37 and 38. Device names and IDs remained in the catalog.
+After installing the exclusion-capable firmware, this route edit is a policy
+change and does not require another firmware update.
+
+### CDC wire protocol
+
+Assert DTR to activate CDC and receive `rpico-bridge ready. Type help for
+commands.` Both CR and LF terminate an input line; CRLF is accepted as one
+terminator. `R GET` returns `R CONFIG <default>`, zero or more
+`R DEVICE <id> <online0/1> <rx> <tx> <UTF8-name-hex>` lines, zero or more
+`R RULE <src-id> <src-cable> <channel> <action> <dest-id> <dest-cable>` lines,
+then `R END`. Device names are UTF-8 bytes encoded as hex.
+
+To replace the saved policy, send `R BEGIN <0|1>` where 0 means route unmatched
+traffic to all other ports and 1 means drop it. Add ordered rules with
+`R RULE <src-id> <src-cable> <channel> <action> <dest-id> <dest-cable>`, then
+send `R COMMIT`. Use `R ABORT` to discard a staged edit. Begin, rule and abort
+commands return `R OK` on success or `R ERR <reason>` on failure. Commit returns
+`R OK` only after the policy is durable and verified; otherwise it returns
+`R ERR <reason>`. Send one machine command at a time.
+
+Wire values are source ID 0 for any source, cable 0–15 or 255 for any cable,
+channel 0–15 for MIDI channels 1–16, 16 for system messages or 255 for any
+channel, and action 0 for all, 1 for drop, 2 for to or 3 for global cable
+exclusion. Action 3 requires one remembered source ID, one exact cable 0–15,
+channel 255 and canonical destination fields `0 255`. It removes that source
+cable as both source and destination, regardless of rule order. For action 2,
+destination ID and cable select the target independently; the MIDI channel is
+unchanged. The current APC Key 25 mk2 exclusion is `R RULE 4 1 255 3 0 255`.
+Lines such as the DTR welcome, help text, `midi ...` diagnostics, `M ...` packet
+traffic and `R INFO ...` notices may interleave with responses. Ignore lines
+that do not match the current response. Only one request may be outstanding.
+
+Before policy or catalog writes, firmware pauses routing and cancels its
+application-owned PIO frame timer. Pico SDK `flash_safe_execute` masks IRQs and
+ensures the other core is not executing or reading flash during the operation.
+[Pico SDK flash safety](https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#pico_flash)
+explains this guarantee. The firmware verifies flash readback before `R COMMIT`
+returns `R OK`; an attached PIO host then triggers a controlled reboot and
+re-enumeration. An earlier automatic catalog save correlated with a host stall;
+cause was not established. Attached-hub save and restore were subsequently
+verified, with ACK and reboot on each save.
+
+The optional Python helper can list the CDC port, show remembered devices, print
+the saved policy as JSON and apply a JSON policy. Install `pyserial` from the
+requirements file first:
+
+```sh
+python3 -m pip install -r tools/requirements.txt
+python3 tools/midi_routes.py ports
+python3 tools/midi_routes.py devices
+python3 tools/midi_routes.py show
+python3 tools/midi_routes.py apply "routing.json"
+```
+
+For example, replace IDs `3` and `4` with two IDs from `devices` to route
+cable-zero traffic both ways on every channel and drop unmatched traffic:
+
+```json
+{
+  "default": "drop",
+  "rules": [
+    { "source": 3, "source_cable": 0, "channel": "any", "action": "to", "destination": 4, "destination_cable": 0 },
+    { "source": 4, "source_cable": 0, "channel": "any", "action": "to", "destination": 3, "destination_cable": 0 }
+  ]
+}
+```
+
+The current local APC Key policy uses `default: "all"` and this rule to remove
+its control cable globally:
+
+```json
+{
+  "default": "all",
+  "rules": [
+    { "source": 4, "source_cable": 1, "action": "exclude" }
+  ]
+}
+```
+
+The preferred graphical workflow is the local React configurator. It connects
+to CDC to inspect devices, add or reorder rules, and select **Exclude cable**.
+Exclusions apply globally before ordered rules. Its MIDI monitor and keyboard
+use the browser's native MIDI access. Use a compatible Chromium browser and
+grant Web Serial and Web MIDI access when prompted. Build the standalone page:
+
+```sh
+cd configurator
+npm ci
+npm run build
+npm test
+```
+
+Open `configurator/dist/index.html` directly in the browser and select
+**Connect board** and **Enable MIDI**. The build produces a self-contained page
+that uses no remote service. If browser permissions are unavailable from the
+file, serve `configurator/dist` on localhost or HTTPS and open the served page.
+The 217 KB build passed seven Node tests and JSDOM integration checks. A full
+headless Chromium run crashed, and no live browser-to-board session has passed.
+The Python JSON workflow remains available for scripted configuration.
+
 ## OS MIDI logger and sender
 
 Install the pinned Python backend and list OS MIDI ports. Use `python3` on
-Linux/macOS or `python` on Windows:
+Linux/macOS or replace it with `python` on Windows:
 
 ```sh
 python3 -m pip install -r tools/requirements.txt
@@ -139,13 +291,16 @@ python3 tools/midi_log.py send --hex "90 3C 64"
 The note command sends Note On and then Note Off. Hex messages accept forms such
 as `90 3C 64` or `F8`.
 
-For a short two-device check, connect two USB MIDI devices through the verified
-PIO host wiring, then connect the bridge's native USB-C data port to the laptop.
-This simultaneous setup requires verified wiring. Run `ports`, start `monitor`
-on the bridge input, and play each device. Confirm the other device responds
-and the monitor logs the traffic. From a second terminal, send a note to the
-bridge output and confirm both devices respond. A power-only native USB
-connection can run standalone automation but cannot carry OS logger data.
+On an earlier firmware, the user reports two-instrument routing through an
+externally powered seven-port hub with the yellow PIO VBUS jumper disconnected.
+The Pico's power source during that trial was not confirmed. This does not
+establish upstream VBUS behavior or production load and fault protection. To
+use the OS MIDI logger, connect the bridge's native USB-C data port to the
+laptop using the wiring in
+[hardware notes](docs/HARDWARE.md). The reported hub test did not verify this
+simultaneous setup. Run `ports`, start `monitor` on the bridge input, and play
+each device. Confirm the other device responds and the monitor logs traffic. A
+power-only native USB connection cannot carry OS logger data.
 
 The Python I/O tests passed with a fake backend, including SysEx, MIDI Clock,
 Active Sensing, explicit sends, Note Off and cleanup on interruption. The
@@ -162,9 +317,11 @@ A native USB-only bench confirmed a blue LED and CDC diagnostics reporting
 the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green
 was observed. No CDC capture was made in this setup. The USB descriptor announces
 100 mA. Combined charger draw is unmeasured, and a laptop-powered experimental
-hub cascade has not been tested. No downstream MIDI device or externally powered
-hub was tested. This does not validate loaded standalone power or production VBUS
-requirements.
+hub cascade has not been tested. On an earlier firmware, the user reports
+two-instrument routing through an externally powered seven-port hub with the
+yellow PIO VBUS jumper disconnected. The Pico's power source during that trial
+was not confirmed. This does not validate production power wiring or loaded
+standalone power.
 
 Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may use it in their own private, in-house tests, but it may collide with other test devices. Do not distribute this firmware or use this ID on devices that will be redistributed, sold or manufactured; see the [pid.codes test PID terms](https://pid.codes/1209/0001/). See [project state](docs/STATE.md) for production identity status.
 

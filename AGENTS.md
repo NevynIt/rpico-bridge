@@ -1,13 +1,14 @@
 # rpico-bridge
 
-Build a small, standalone USB MIDI 1.0 bridge for the Waveshare RP2040-Zero.
-Use native USB-C for one bidirectional MIDI port and CDC diagnostics. Use PIO USB
-as host for multiple class-compliant MIDI devices on one externally powered hub.
-Enumerate automatically and route each event to all other logical MIDI ports.
-Preserve MIDI channels, virtual cable identities, SysEx, realtime and other valid
-traffic. USB power must suffice for the board when a computer is absent. Use the
-onboard RGB LED for status and the hardware reset button for recovery. v1 has no
-routing configuration, channel mapping, filtering, extra controls or peripherals.
+Build a small USB MIDI 1.0 bridge for the Waveshare RP2040-Zero. Use native
+USB-C for one bidirectional MIDI port and CDC diagnostics. Use PIO USB as host
+for multiple class-compliant MIDI devices on a hub. Discover devices and route
+each event among logical MIDI ports. Preserve MIDI channels, SysEx, realtime
+and other valid traffic. Routing rules may select a destination USB cable
+independently. USB power must suffice when a computer is absent. Use the onboard
+RGB LED for status and hardware reset for recovery.
+Routing policy is configurable, but v1 has no channel rewriting, filters, extra
+controls or peripherals.
 
 ## Responsibilities
 
@@ -22,6 +23,9 @@ routing configuration, channel mapping, filtering, extra controls or peripherals
 - `midi` owns the transport-independent routing engine and packet semantics.
 - `documentation` owns README and helps maintain the current-state snapshot.
 - `testing` owns native tests, USB mocks and physical acceptance procedures.
+- The routing policy uses an ordered list of match rules and a fallback action.
+  Preserve MIDI channel values. Rules can select destination cables. Do not add
+  channel rewriting or filtering.
 
 Use specialist delegation for detailed work. Assign a clear deliverable and
 scope, avoid overlapping file ownership, and keep no more than three specialists
@@ -39,6 +43,11 @@ affect safety or purchasing. Keep documentation to this file, README,
   back to its origin. Preserve traffic ordering where the protocol requires it.
 - Prefer bounded queues with explicit overflow behavior and no realtime allocation.
   Keep CDC diagnostics nonblocking. Define core/IRQ ownership of shared state.
+- Before SDK flash writes for policy or catalog updates, pause MIDI routing and
+  stop the PIO host timer. Mask the native CDC IRQ during the flash operation.
+  A successful save with an attached PIO host is expected to reboot and
+  re-enumerate the host-side devices. Acknowledge explicit commits only after
+  durable flash verification.
 - Verify host and device USB together before claiming dual-interface operation.
   Label evidence as compiled, simulated, or physically tested. Hardware acceptance
   requires the actual board, hub and multiple MIDI devices.

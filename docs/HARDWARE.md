@@ -31,7 +31,7 @@ A four-wire USB-C breakout labelled V, D−, D+ and G was used with a small USB-
 
 For the temporary empty-hub check, a 5 V USB wall charger powered the Pico through its native USB-C port. A jumper connected the breakout's V pin to the Pico 5 V pin. The laptop was unplugged, the hub had no external power supply, and no downstream devices were connected. Do not repeat this direct VBUS jumper setup with the laptop attached to native USB-C, since it feeds the hub from the laptop's VBUS through the board. The check does not validate load capacity, fault protection, reverse-current behavior, or powered-hub operation.
 
-The production host port still needs a defined 5 V source, current limiting and reverse-current protection. A powered hub can still use upstream VBUS, and the behavior of the planned seven-port hub has not been checked. Keep its power feed isolated from native USB-C VBUS when the computer is attached. Confirm its upstream VBUS and USB 2.0 topology before connecting it. [USB 2.0 specification, §7.2.1.2](https://www.usb.org/document-library/usb-20-specification)
+The production host port still needs a defined 5 V source, current limiting and reverse-current protection. The powered seven-port hub's upstream VBUS behavior has not been measured. Keep the host VBUS feed isolated from native USB-C VBUS when the computer is attached. [USB 2.0 specification, §7.2.1.2](https://www.usb.org/document-library/usb-20-specification)
 
 ## Bench acceptance
 
@@ -43,18 +43,21 @@ from the computer and check that `rx` increases while `tx` stays at zero.
 Press **RESET** and verify both interfaces return.
 Record the firmware commit, operating system and results.
 
-The temporary empty bus-powered hub check has passed. The Pico was powered by a
+The temporary empty bus-powered hub check passed. The Pico was powered by a
 5 V wall charger through native USB-C with the laptop disconnected. With the
 PIO host VBUS jumper in place, the status LED changed from blue (`hubs=0`) to
 green after TinyUSB completed hub setup. This confirms detection of that one
-hub with the current prototype firmware in that setup. It does not validate a
-field build, downstream MIDI devices, load capacity, or the planned externally
-powered seven-port hub.
+hub with the current prototype firmware in that setup.
 
-Before testing the seven-port hub, connect it to a computer with its stock
-cable and check its USB 2.0 hub tree. On Linux, `lsusb -t` lists the hub nodes
-and devices below them. Verify its upstream VBUS and the protected host power
-arrangement first. Record the hub and MIDI devices used.
+The owner reports that two MIDI devices routed through the externally powered
+seven-port hub on the previous firmware with the yellow PIO VBUS jumper
+disconnected. The Pico's native USB-C power source during this trial was not
+confirmed. This report does not establish the hub's upstream VBUS behavior or
+load and fault protection for a production host port.
+
+For repeatable validation, record the seven-port hub's USB 2.0 topology on a
+computer with its stock cable. On Linux, `lsusb -t` lists the hub nodes and
+devices below them. Record the hub, MIDI devices and power connections used.
 
 1. Connect two or more MIDI devices through the hub and check that CDC reports
    the expected number of MIDI interfaces. Verify the LED turns green.

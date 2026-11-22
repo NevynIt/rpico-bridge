@@ -1,0 +1,240 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import styles from './style.css';
+import { SerialBridge, parseSnapshot, parseMidiPacket, formatMidiBytes, midiName } from './protocol.mjs';
+
+const h = React.createElement;
+const initial = { default: 0, devices: [], rules: [] };
+const line = (...children) => h('div', { className: 'row' }, ...children);
+const badge = (text, kind = '') => h('span', { className: `badge ${kind}` }, text);
+const actionNames = ['Route all', 'Drop', 'Route to', 'Exclude cable'];
+const any = 255;
+
+function App() {
+  const [serial, setSerial] = useState('Disconnected');
+  const [serialNote, setSerialNote] = useState('');
+  const [midi, setMidi] = useState('Unavailable');
+  const [midiInputs, setMidiInputs] = useState([]);
+  const [midiOutputs, setMidiOutputs] = useState([]);
+  const [inputId, setInputId] = useState('');
+  const [outputId, setOutputId] = useState('');
+  const [snapshot, setSnapshot] = useState(initial);
+  const [working, setWorking] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [consoleLines, setConsoleLines] = useState([]);
+  const [command, setCommand] = useState('help');
+  const [channel, setChannel] = useState(1);
+  const [logs, setLogs] = useState(true);
+  const bridge = useRef(null);
+  const midiAccess = useRef(null);
+  const outputRef = useRef(null);
+  const held = useRef(new Map());
+  const autoNames = ['USB MIDI 1.0 Bridge', 'rpico-bridge'];
+
+  const addEvent = (origin, bytes) => {
+    const detail = parseMidiPacket(bytes);
+    const now = new Date().toLocaleTimeString();
+    setEvents(old => [{ now, origin, raw: formatMidiBytes(bytes), detail }, ...old].slice(0, 180));
+  };
+  const addConsole = value => setConsoleLines(old => [...old, value].slice(-80));
+  const refreshMidi = access => {
+    const inputs = [...access.inputs.values()];
+    const outputs = [...access.outputs.values()];
+    setMidiInputs(inputs);
+    setMidiOutputs(outputs);
+    const matches = outputs.filter(p => autoNames.some(n => p.name?.toLowerCase().includes(n.toLowerCase())));
+    if (!outputRef.current && matches.length === 1) {
+      setOutputId(matches[0].id);
+      outputRef.current = matches[0];
+    }
+    if (!inputId) {
+      const inMatches = inputs.filter(p => autoNames.some(n => p.name?.toLowerCase().includes(n.toLowerCase())));
+      if (inMatches.length === 1) setInputId(inMatches[0].id);
+    }
+  };
+  useEffect(() => {
+    const supported = !!navigator.requestMIDIAccess;
+    setMidi(supported ? 'Click to enable' : 'Web MIDI unavailable');
+    return () => { releaseAll(); disconnectSerial(false); };
+  }, []);
+  useEffect(() => {
+    outputRef.current = midiOutputs.find(p => p.id === outputId) || null;
+    releaseAll();
+  }, [outputId, midiOutputs]);
+  useEffect(() => {
+    const input = midiInputs.find(p => p.id === inputId);
+    if (!input) return;
+    input.onmidimessage = event => {
+      if (!logs) return;
+      const bytes = Array.from(event.data);
+      addEvent(input.name || 'MIDI input', bytes);
+    };
+    return () => { input.onmidimessage = null; };
+  }, [inputId, midiInputs, logs]);
+  useEffect(() => {
+    const blur = () => releaseAll();
+    window.addEventListener('blur', blur);
+    return () => window.removeEventListener('blur', blur);
+  }, []);
+
+  function releaseAll() {
+    for (const [key, item] of held.current) {
+      try { item.output.send([0x80 | item.channel, item.note, 0]); } catch { /* output vanished */ }
+      held.current.delete(key);
+    }
+  }
+  async function connectMidi() {
+    try {
+      if (!navigator.requestMIDIAccess) throw new Error('This browser does not provide Web MIDI. Use a Chromium-based browser on HTTPS or localhost.');
+      const access = await navigator.requestMIDIAccess({ sysex: true });
+      midiAccess.current = access;
+      refreshMidi(access);
+      access.onstatechange = () => refreshMidi(access);
+      setMidi('Connected');
+    } catch (error) { setMidi(error.message || 'MIDI access denied'); }
+  }
+  async function connectSerial() {
+    try {
+      if (!('serial' in navigator)) throw new Error('Web Serial is unavailable. Open this file in a supported Chromium browser using HTTPS or localhost.');
+      if (!window.isSecureContext) throw new Error('Browser serial access needs a secure context. Use HTTPS or localhost.');
+      const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x1209, usbProductId: 0x0001 }] });
+      const instance = new SerialBridge(port, {
+        onLine: text => { addConsole(text); },
+        onState: text => setSerial(text),
+      });
+      bridge.current = instance;
+      await instance.open();
+      setSerialNote('Choose a command or type help. Device welcome and help text appear here.');
+      await refreshRoutes(instance);
+    } catch (error) {
+      setSerial(error.message === 'The user aborted a request.' ? 'Disconnected' : 'Error');
+      setSerialNote(error.message || 'Could not connect to the board.');
+    }
+  }
+  async function disconnectSerial(show = true) {
+    const current = bridge.current;
+    bridge.current = null;
+    if (current) await current.close();
+    if (show) setSerial('Disconnected');
+  }
+  async function refreshRoutes(target = bridge.current) {
+    if (!target || working) return;
+    setWorking(true);
+    try { setSnapshot(await target.getSnapshot()); setSerialNote('Device inventory and saved route rules loaded.'); }
+    catch (error) { setSerialNote(error.message); }
+    finally { setWorking(false); }
+  }
+  async function sendCommand(event) {
+    event.preventDefault();
+    const text = command.trim();
+    if (!text || !bridge.current) return;
+    addConsole(`> ${text}`);
+    setCommand('');
+    try { await bridge.current.sendRaw(text); }
+    catch (error) { addConsole(`! ${error.message}`); }
+  }
+  async function commit() {
+    if (!bridge.current) { setSerialNote('Connect to the board before saving rules.'); return; }
+    if (snapshot.rules.length > 24) { setSerialNote('The board supports up to 24 ordered rules.'); return; }
+    setWorking(true);
+    try {
+      await bridge.current.applySnapshot(snapshot);
+      setSerialNote('Rules saved to the board and active.');
+      await refreshRoutesAfterCommit();
+    } catch (error) { setSerialNote(`Save failed. ${error.message}`); }
+    finally { setWorking(false); }
+  }
+  async function refreshRoutesAfterCommit() {
+    try { setSnapshot(await bridge.current.getSnapshot()); } catch { /* keep edited view and report commit result */ }
+  }
+  function changeRule(index, patch) {
+    setSnapshot(s => ({ ...s, rules: s.rules.map((rule, i) => i === index ? { ...rule, ...patch } : rule) }));
+  }
+  function changeRuleAction(index, rule, action) {
+    if (action !== 3) { changeRule(index, { action }); return; }
+    const knownSource = snapshot.devices.some(device => device.id === rule.source_id);
+    const exactCable = Number.isInteger(rule.source_cable) && rule.source_cable >= 0 && rule.source_cable <= 15;
+    changeRule(index, {
+      action,
+      source_id: knownSource ? rule.source_id : (snapshot.devices[0]?.id || 0),
+      source_cable: exactCable ? rule.source_cable : 0,
+      channel: any,
+      destination_id: 0,
+      destination_cable: any,
+    });
+  }
+  function addRule() {
+    setSnapshot(s => ({ ...s, rules: [...s.rules, { source_id: 0, source_cable: any, channel: any, action: 0, destination_id: 1, destination_cable: any }] }));
+  }
+  function moveRule(index, delta) {
+    setSnapshot(s => { const rules = [...s.rules]; const to = index + delta; if (to < 0 || to >= rules.length) return s; [rules[index], rules[to]] = [rules[to], rules[index]]; return { ...s, rules }; });
+  }
+  function noteOn(key, note) {
+    if (held.current.has(key)) return;
+    const output = outputRef.current;
+    if (!output) { setMidi('Select the bridge MIDI output'); return; }
+    const ch = Number(channel) - 1;
+    try {
+      const bytes = [0x90 | ch, note, 96];
+      output.send(bytes);
+      held.current.set(key, { output, channel: ch, note });
+      if (logs) addEvent('Keyboard', bytes);
+    }
+    catch (error) { setMidi(`MIDI send failed: ${error.message}`); }
+  }
+  function noteOff(key) {
+    const item = held.current.get(key);
+    if (!item) return;
+    const bytes = [0x80 | item.channel, item.note, 0];
+    try { item.output.send(bytes); if (logs) addEvent('Keyboard', bytes); } catch { /* disconnected */ }
+    held.current.delete(key);
+  }
+  const deviceLabel = id => id === 0 ? 'Any device' : id === 1 ? 'Native USB' : id === 2 ? 'CDC console' : snapshot.devices.find(d => d.id === id)?.name || `Device ${id}`;
+  const inputSelect = h('select', { value: inputId, onChange: e => setInputId(e.target.value) }, h('option', { value: '' }, 'No input selected'), ...midiInputs.map(p => h('option', { key: p.id, value: p.id }, p.name || p.id)));
+  const outputSelect = h('select', { value: outputId, onChange: e => setOutputId(e.target.value) }, h('option', { value: '' }, 'No output selected'), ...midiOutputs.map(p => h('option', { key: p.id, value: p.id }, p.name || p.id)));
+
+  return h('main', { className: 'shell' },
+    h('header', { className: 'topbar' },
+      h('div', { className: 'brand' }, h('span', { className: 'brand-mark' }, 'r'), h('div', null, h('strong', null, 'rpico-bridge'), h('small', null, 'DEVICE CONFIGURATOR'))),
+      line(badge(`CDC · ${serial}`, serial === 'Connected' ? 'good' : ''), badge(`MIDI · ${midi}`, midi === 'Connected' ? 'good' : ''))),
+    h('section', { className: 'intro' }, h('div', null, h('h1', null, 'Configure the bridge.'), h('p', { className: 'subhead' }, 'Connect over CDC to inspect devices and save ordered routing rules. MIDI monitoring and the keyboard use the browser’s native MIDI access.')), h('div', { className: 'intro-actions' }, h('button', { className: 'primary', onClick: connectSerial, disabled: serial === 'Connected' }, serial === 'Connected' ? 'Board connected' : 'Connect board'), serial === 'Connected' && h('button', { className: 'quiet', onClick: () => disconnectSerial() }, 'Disconnect'))),
+    serialNote && h('div', { className: 'notice' }, serialNote),
+    h('div', { className: 'grid' },
+      h('section', { className: 'panel inventory' },
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Connected devices')), h('button', { className: 'icon-button', onClick: () => refreshRoutes(), disabled: working || serial !== 'Connected', title: 'Refresh devices' }, '↻')),
+        h('p', { className: 'muted' }, 'Saved identities remain listed while devices are offline.'),
+        snapshot.devices.length ? h('div', { className: 'device-list' }, ...snapshot.devices.map(d => h('div', { className: 'device', key: d.id }, h('span', { className: `dot ${d.online ? 'online' : ''}` }), h('div', { className: 'device-name' }, h('strong', null, d.name || `Device ${d.id}`), h('small', null, `ID ${d.id} · ${d.rx_cables} in / ${d.tx_cables} out cables`)), badge(d.online ? 'ONLINE' : 'OFFLINE', d.online ? 'good' : '')))) : h('div', { className: 'empty' }, 'Connect the board to discover remembered MIDI devices.'),
+        h('div', { className: 'panel-foot' }, `${snapshot.devices.filter(d => d.online).length} online`, h('span', null, `${snapshot.devices.length} remembered`))),
+      h('section', { className: 'panel rules' },
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Routing rules')), badge(`${snapshot.rules.length} / 24`, 'count')),
+        h('p', { className: 'muted' }, 'Rules run top to bottom. First matching rule wins.'),
+        h('p', { className: 'exclude-note' }, 'Exclude cable blocks both input and output for that remembered device cable before all rules. Rule order cannot override it.'),
+        h('div', { className: 'default-row' }, h('label', null, 'If no rule matches'), h('select', { value: snapshot.default, onChange: e => setSnapshot(s => ({ ...s, default: Number(e.target.value) })) }, h('option', { value: 0 }, 'Route to all other ports'), h('option', { value: 1 }, 'Drop'))),
+        h('div', { className: 'rule-list' }, snapshot.rules.length ? snapshot.rules.map((rule, i) => h('article', { className: 'rule', key: i },
+          h('div', { className: 'rule-order' }, h('span', null, String(i + 1).padStart(2, '0')), h('button', { onClick: () => moveRule(i, -1), disabled: i === 0, title: 'Move up' }, '↑'), h('button', { onClick: () => moveRule(i, 1), disabled: i === snapshot.rules.length - 1, title: 'Move down' }, '↓')),
+          h('div', { className: 'rule-fields' },
+            line(h('label', null, 'From', h('select', { value: rule.source_id, onChange: e => changeRule(i, { source_id: Number(e.target.value) }) }, rule.action === 3 ? h('option', { value: 0, disabled: true }, 'Choose remembered device') : h('option', { value: 0 }, 'Any device'), ...(rule.action === 3 ? [] : [h('option', { value: 1 }, 'Native USB'), h('option', { value: 2 }, 'CDC console')]), ...snapshot.devices.map(d => h('option', { key: d.id, value: d.id }, d.name || `Device ${d.id}`)))), h('label', null, 'Cable', h('select', { value: rule.source_cable, onChange: e => changeRule(i, { source_cable: Number(e.target.value) }) }, rule.action === 3 ? h('option', { value: any, disabled: true }, 'Choose cable') : h('option', { value: any }, 'Any'), ...Array.from({ length: 16 }, (_, n) => h('option', { key: n, value: n }, String(n))))), rule.action !== 3 && h('label', null, 'Channel', h('select', { value: rule.channel, onChange: e => changeRule(i, { channel: Number(e.target.value) }) }, h('option', { value: any }, 'Any'), ...Array.from({ length: 16 }, (_, n) => h('option', { key: n, value: n }, `Ch ${n + 1}`)), h('option', { value: 16 }, 'System')))),
+            line(h('label', null, 'Action', h('select', { value: rule.action, onChange: e => changeRuleAction(i, rule, Number(e.target.value)) }, ...actionNames.map((name, id) => h('option', { key: id, value: id }, name)))), rule.action === 2 && h('label', null, 'Destination', h('select', { value: rule.destination_id, onChange: e => changeRule(i, { destination_id: Number(e.target.value) }) }, h('option', { value: 0 }, 'Choose destination'), h('option', { value: 1 }, 'Native USB'), h('option', { value: 2 }, 'CDC console'), ...snapshot.devices.map(d => h('option', { key: d.id, value: d.id }, d.name || `Device ${d.id}`)))), rule.action === 2 && h('label', null, 'To cable', h('select', { value: rule.destination_cable, onChange: e => changeRule(i, { destination_cable: Number(e.target.value) }) }, h('option', { value: any }, 'Any'), ...Array.from({ length: 16 }, (_, n) => h('option', { key: n, value: n }, String(n))))))),
+          h('button', { className: 'remove', onClick: () => setSnapshot(s => ({ ...s, rules: s.rules.filter((_, j) => i !== j) })), title: 'Remove rule' }, '×')))
+          : h('div', { className: 'empty compact' }, 'No rules yet. The default action applies to every message.')),
+        h('div', { className: 'rule-actions' }, h('button', { className: 'secondary', onClick: addRule, disabled: snapshot.rules.length >= 24 }, '+ Add rule'), h('button', { className: 'primary', onClick: commit, disabled: working || serial !== 'Connected' }, working ? 'Working…' : 'Save to board'))),
+      h('section', { className: 'panel monitor' },
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'MIDI monitor')), h('label', { className: 'toggle' }, h('input', { type: 'checkbox', checked: logs, onChange: e => setLogs(e.target.checked) }), 'Capture')),
+        h('div', { className: 'midi-selectors' }, h('label', null, 'Input', inputSelect), h('label', null, 'Output / keyboard', outputSelect), h('button', { className: 'secondary', onClick: connectMidi }, midi === 'Connected' ? 'Refresh MIDI' : 'Enable MIDI')),
+        h('div', { className: 'log-head' }, h('span', null, 'LIVE EVENTS'), h('button', { className: 'text-button', onClick: () => setEvents([]) }, 'Clear')),
+        h('div', { className: 'event-list' }, logs && events.length ? events.map((event, i) => h('div', { className: 'event', key: `${event.now}-${i}` }, h('time', null, event.now), h('span', { className: 'event-source' }, event.origin), h('code', null, event.raw), h('span', { className: 'event-detail' }, event.detail))) : h('div', { className: 'empty compact' }, logs ? 'Select the bridge input to see incoming MIDI.' : 'Capture paused.')),
+        h('div', { className: 'keyboard-head' }, h('strong', null, 'Test keyboard'), h('label', null, 'Channel', h('select', { value: channel, onChange: e => setChannel(e.target.value) }, ...Array.from({ length: 16 }, (_, i) => h('option', { key: i, value: i + 1 }, String(i + 1)))))),
+        h('div', { className: 'keyboard' }, ...Array.from({ length: 13 }, (_, i) => { const note = 60 + i; return h('button', { key: note, className: `key ${[1, 3, 6, 8, 10].includes(note % 12) ? 'black' : ''}`, onPointerDown: e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); noteOn(note, note); }, onPointerUp: () => noteOff(note), onPointerCancel: () => noteOff(note), onLostPointerCapture: () => noteOff(note), onContextMenu: e => e.preventDefault(), 'aria-label': `Play ${midiName(note)}` }, ![1, 3, 6, 8, 10].includes(note % 12) ? h('span', null, midiName(note)) : null); })),
+        h('p', { className: 'hint' }, 'Notes go only to the selected MIDI output. Hold and release a key to send Note On / Note Off.')),
+      h('section', { className: 'panel console' },
+        h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Serial console')), h('button', { className: 'text-button', onClick: () => setConsoleLines([]) }, 'Clear')),
+        h('div', { className: 'console-body' }, consoleLines.length ? consoleLines.map((text, i) => h('div', { key: i, className: text.startsWith('>') ? 'sent' : text.startsWith('!') ? 'error' : '' }, text)) : h('span', { className: 'console-placeholder' }, 'Connect over CDC to see the welcome message and device responses.')),
+        h('form', { onSubmit: sendCommand, className: 'command-form' }, h('span', null, '›'), h('input', { value: command, onChange: e => setCommand(e.target.value), placeholder: 'Type help or a CDC command', disabled: serial !== 'Connected', 'aria-label': 'CDC command' }), h('button', { type: 'submit', disabled: serial !== 'Connected' }, 'Send')),
+        h('p', { className: 'hint' }, 'Try help, help rule, or help devices.'))),
+    h('footer', null, h('span', null, 'rpico-bridge · local-only configurator'), h('span', null, 'No server or cloud connection required')));
+}
+
+const styleNode = document.createElement('style');
+styleNode.textContent = styles;
+document.head.append(styleNode);
+createRoot(document.getElementById('root')).render(h(App));

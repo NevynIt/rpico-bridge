@@ -31,9 +31,10 @@ development container are on the public `nevynit/rpico-bridge` repository.
 
 - Use native USB-C as device and PIO USB as host. The owner plans to power the
   board via a power-only port on the existing seven-data-port hub, or via a laptop
-  for testing. A photo or description of the computer end of the hub's data
-  cable will identify the adapter connector. The hardware team still needs to
-  verify upstream VBUS, backfeed and USB 2.0 hub topology on the bench.
+  for testing. The hub's existing cable is USB 3.0 Standard-A to Standard-B.
+  A USB-C host socket is a candidate, pending identification of the breakout
+  pinout and CC circuitry, and a protected 5 V source. Upstream VBUS, backfeed
+  and USB 2.0 hub topology still need bench checks.
 - The SDK's TinyUSB pin has a MIDI device class but lacks a MIDI host class.
   Evaluate [TinyUSB 0.19.0](https://github.com/hathach/tinyusb/releases/tag/0.19.0)
   or a later pin with the upstream MIDI 1.0 host driver before writing a driver.

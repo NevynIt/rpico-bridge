@@ -17,15 +17,41 @@ project(rpico_bridge LANGUAGES C CXX ASM)
 if(NOT PICO_SDK_VERSION_STRING STREQUAL "2.2.0")
     message(FATAL_ERROR "rpico-bridge requires Pico SDK 2.2.0")
 endif()
-pico_sdk_init()
 
-add_executable(rpico_bridge firmware/main.c)
+if(NOT PICO_TINYUSB_PATH)
+    set(PICO_TINYUSB_PATH "$ENV{PICO_TINYUSB_PATH}")
+endif()
+if(NOT EXISTS "${PICO_TINYUSB_PATH}/src/tusb_option.h")
+    message(FATAL_ERROR "Set PICO_TINYUSB_PATH to TinyUSB 0.21.0 or rebuild the dev container")
+endif()
+
+if(NOT PICO_PIO_USB_PATH)
+    set(PICO_PIO_USB_PATH "$ENV{PICO_PIO_USB_PATH}")
+endif()
+pico_sdk_init()
+if(NOT TARGET tinyusb_pico_pio_usb)
+    message(FATAL_ERROR "Set PICO_PIO_USB_PATH to Pico-PIO-USB 0.7.3")
+endif()
+
+set(bridge_sources
+    firmware/main.c
+    firmware/bridge.c
+    firmware/midi_router.c
+    firmware/usb_device.c
+    firmware/usb_host.c
+)
+add_executable(rpico_bridge ${bridge_sources})
 target_compile_features(rpico_bridge PRIVATE c_std_11)
-set_source_files_properties(firmware/main.c PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
+set_source_files_properties(${bridge_sources} PROPERTIES
+    COMPILE_OPTIONS "-Wall;-Wextra;-Wshadow;-Wstrict-prototypes"
+)
+target_include_directories(rpico_bridge PRIVATE firmware)
 target_compile_definitions(rpico_bridge PRIVATE PICO_NO_BI_PROGRAM_BUILD_DATE=1)
-target_link_libraries(rpico_bridge PRIVATE pico_stdlib)
+target_link_libraries(rpico_bridge PRIVATE
+    pico_stdlib pico_status_led pico_unique_id tinyusb_device tinyusb_host tinyusb_pico_pio_usb
+)
 pico_enable_stdio_uart(rpico_bridge 0)
 pico_enable_stdio_usb(rpico_bridge 0)
 pico_set_program_name(rpico_bridge "rpico-bridge")
-pico_set_program_description(rpico_bridge "RP2040-Zero foundation firmware")
+pico_set_program_description(rpico_bridge "USB MIDI bridge for RP2040-Zero")
 pico_add_extra_outputs(rpico_bridge)

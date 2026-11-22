@@ -7,7 +7,8 @@ ARG PICOTOOL_REF=2.2.0
 ARG PICO_PIO_USB_REF=0.7.3
 
 ENV PICO_SDK_PATH=/opt/pico/pico-sdk \
-    PICO_PIO_USB_PATH=/opt/pico/Pico-PIO-USB
+    PICO_PIO_USB_PATH=/opt/pico/Pico-PIO-USB \
+    PICO_TINYUSB_PATH=/opt/pico/tinyusb-0.21.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -23,6 +24,10 @@ RUN git clone --depth 1 --branch "$PICO_SDK_REF" \
     && git -C "$PICO_SDK_PATH" submodule update --init --depth 1 \
     && git clone --depth 1 --branch "$PICO_PIO_USB_REF" \
         https://github.com/sekigon-gonnoc/Pico-PIO-USB.git "$PICO_PIO_USB_PATH" \
+    && curl -fsSL https://codeload.github.com/hathach/tinyusb/tar.gz/refs/tags/0.21.0 -o /tmp/tinyusb.tar.gz \
+    && printf '%s\n' 'b7cdf35c5ccefb0f61640aff94a732ab4ebcb21498201e4a161545891b23ba01  /tmp/tinyusb.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/tinyusb.tar.gz -C /opt/pico \
+    && rm /tmp/tinyusb.tar.gz \
     && git clone --depth 1 --branch "$PICOTOOL_REF" \
         https://github.com/raspberrypi/picotool.git /tmp/picotool \
     && cmake -S /tmp/picotool -B /tmp/picotool/build -G Ninja \

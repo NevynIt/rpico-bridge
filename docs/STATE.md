@@ -1,57 +1,56 @@
 # Project state
 
-**Milestone 2 — USB architecture.** The foundation, five agent definitions and
-development container are on the public `nevynit/rpico-bridge` repository.
+**Prototype ready for native USB bench checks.** Firmware and native routing
+checks have passed as described below. Physical USB host operation, adapter
+wiring and full hub bench operation remain unverified. This is development
+firmware, not a release for distribution.
 
-## Build evidence
+## Verification evidence
 
-- The Release build produces `build/rpico_bridge.uf2`. `picotool info -a`
-  reports RP2040, `waveshare_rp2040_zero` and SDK 2.2.0. This image starts
-  the SDK and leaves GPIO and application USB idle. Two build directories with
-  different `SOURCE_DATE_EPOCH` values produced byte-identical UF2 files.
-- Container versions used for the build and compatibility checks:
+- Native Release test suite: 2/2 tests passed.
+- Native AddressSanitizer and UndefinedBehaviorSanitizer run passed; LeakSanitizer
+  was disabled.
+- Release UF2 builds from two separate build directories were byte-identical.
+- Independent ELF descriptor verification found four interfaces: CDC control
+  and data, plus USB Audio Control and MIDI Streaming. MIDI Streaming advertises
+  one cable in each direction.
+- No physical USB devices are available in the container, so none of these
+  results establish physical host/device interoperability.
 
-  | Dependency | Version | Commit |
-  | --- | --- | --- |
-  | Pico SDK | 2.2.0 | `a1438dff1d38bd9c65dbd693f0e5db4b9ae91779` |
-  | SDK TinyUSB | 0.18.0 | `86ad6e56c1700e85f1c5678607a762cfe3aa2f47` |
-  | Pico-PIO-USB | 0.7.3 | `b186e36bea0f3bcc2ee94ca1fa81e7f71281443a` |
+## Current design and constraints
 
-  ARM GCC 12.2.1, CMake 3.25.1, Ninja 1.11.1 and picotool 2.2.0.
-- The installed Pico-PIO-USB `host_hid_to_device_cdc` example compiles and
-  links for this board with the exact pins above. It covers native CDC device,
-  PIO HID host and TinyUSB hub support at build time. TinyUSB's `midi_test`
-  device example also builds for the board.
-- Three GPT-6 Luna Medium specialists completed hardware, USB and testing
-  research. Five TOML definitions match the Codex 0.171.0 schema. The local catalog
-  includes both requested models and efforts. Launching the project-scoped files
-  in the installed CLI is pending because session storage is read-only.
+- One foreground loop owns the router and both TinyUSB task pumps. TinyUSB 0.21
+  provides asynchronous host enumeration and the host MIDI packet API.
+- Build-time limits are seven USB devices, two hub nodes and eight host MIDI
+  interfaces. The attached hub's internal topology has not been verified.
+- Each advertised destination cable receives the original CIN and MIDI bytes,
+  tagged with its local cable number. The source logical cable is excluded.
+  Output queues are bounded; congestion may drop packets or abort a SysEx stream
+  on the affected output while other outputs continue.
+- Prototype host data pins are GPIO14/15. The first physical test should use
+  only the board and a computer to check native USB; it does not depend on the
+  host breakout. The hardware owner reports a four-pin breakout, but exact pin
+  labels are unconfirmed. The host adapter and full powered-hub bench have not
+  been verified.
+- Board power is intended to come from native USB-C, supplied by a computer or
+  an externally powered hub. USB-C breakout pinout, CC configuration, protected
+  host 5 V feed and backfeed behavior remain open hardware checks.
+- USB descriptors use a prototype VID/PID; an assigned identity is required
+  before distributing firmware.
 
-## Decisions and open items
+## Pinned firmware dependencies
 
-- Use native USB-C as device and PIO USB as host. The owner plans to power the
-  board via a power-only port on the existing seven-data-port hub, or via a laptop
-  for testing. The hub's existing cable is USB 3.0 Standard-A to Standard-B.
-  A USB-C host socket is a candidate, pending identification of the breakout
-  pinout and CC circuitry, and a protected 5 V source. Upstream VBUS, backfeed
-  and USB 2.0 hub topology still need bench checks.
-- The SDK's TinyUSB pin has a MIDI device class but lacks a MIDI host class.
-  Evaluate [TinyUSB 0.19.0](https://github.com/hathach/tinyusb/releases/tag/0.19.0)
-  or a later pin with the upstream MIDI 1.0 host driver before writing a driver.
-  Recheck SDK/Pico-PIO-USB builds, hub limits and reconnects.
-- Prefer USB MIDI event packets and distinct logical ports per interface and
-  cable. Define SysEx serialization when multiple sources share an output and
-  exercise stalled-output overflow, disconnect and address reuse in native tests.
-- Open acceptance items include native MIDI + CDC enumeration, dual USB operation,
-  multi-device hub enumeration, routing and latency, reconnect, standalone power
-  and soak on actual hardware. The container has no USB device node. Wokwi's
-  partial Pico USB simulation cannot establish PIO-host or hub operation.
+| Dependency | Pinned revision |
+| --- | --- |
+| Pico SDK | 2.2.0, `a1438dff1d38bd9c65dbd693f0e5db4b9ae91779` |
+| TinyUSB | 0.21.0, archive SHA-256 `b7cdf35c5ccefb0f61640aff94a732ab4ebcb21498201e4a161545891b23ba01` |
+| Pico-PIO-USB | 0.7.3, `b186e36bea0f3bcc2ee94ca1fa81e7f71281443a` |
+| ARM GCC, picotool | 12.2.1, 2.2.0 |
 
-## Next three tasks
+## Next tasks
 
-1. Build the native MIDI 1.0 + CDC interface and verify a pinned MIDI host
-   dependency with the PIO host. Confirm the hub's topology and safe VBUS feed.
-2. Implement bounded, transport-independent routing and native tests for fan-out,
-   no self-echo, virtual cables, SysEx/realtime, backpressure and reconnect.
-3. Verify the native interface, powered hub enumeration and MIDI transport on
-   the RP2040-Zero.
+1. When hardware is available, test native USB with only the board and a
+   computer; record enumeration, blue LED, `host=0` and expected RX counter.
+2. Identify breakout pin labels and confirm the host adapter and power design.
+3. Validate hub operation with multiple devices and standalone power using the
+   acceptance steps in [HARDWARE.md](HARDWARE.md).

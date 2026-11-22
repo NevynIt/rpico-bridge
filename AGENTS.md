@@ -12,17 +12,23 @@ routing configuration, channel mapping, filtering, extra controls or peripherals
 ## Responsibilities
 
 - Main agent owns milestones, architecture, task boundaries, review, integration,
-  verification and GitHub. Prefer GPT-6.2 Sol with high reasoning, when available.
+  final verification and publishing to GitHub. Prefer GPT-6.2 Sol with high
+  reasoning, when available.
+- Specialists own detailed implementation, debugging, technical research, test
+  authoring and detailed verification within their assigned scope. The main agent
+  assigns bounded tasks, reviews the evidence and changes, then integrates them.
 - `hardware` owns electrical design, wiring and BOM in `docs/HARDWARE.md`.
 - `usb_firmware` owns SDK, platform, USB host/device, status LED and diagnostics.
 - `midi` owns the transport-independent routing engine and packet semantics.
 - `documentation` owns README and helps maintain the current-state snapshot.
 - `testing` owns native tests, USB mocks and physical acceptance procedures.
 
-Delegate bounded tasks to at most three specialists at once. Prefer GPT-6 Luna
-with medium reasoning. Assign disjoint files and bring findings and interface
-decisions to the main agent. Ask the owner before adopting physical assumptions
-that affect safety or purchasing. Keep documentation to this file, README,
+Use specialist delegation for detailed work. Assign a clear deliverable and
+scope, avoid overlapping file ownership, and keep no more than three specialists
+active at once. Prefer GPT-6 Luna with medium reasoning. Specialists report
+evidence and interface decisions to the main agent, who owns integration and
+publication. Ask the hardware owner before adopting physical assumptions that
+affect safety or purchasing. Keep documentation to this file, README,
 `docs/STATE.md` and `docs/HARDWARE.md` unless another document is necessary.
 
 ## Engineering
@@ -45,11 +51,14 @@ that affect safety or purchasing. Keep documentation to this file, README,
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 picotool info build/rpico_bridge.uf2
+cmake -S tests -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
 git diff --check
 ```
 
-Run these in the dev container. Native test commands will be added with the
-routing tests. See `docs/STATE.md` for the current verification and blockers.
+Run the firmware build in the dev container. The native tests also run on a
+Linux host without a Pico SDK. See `docs/STATE.md` for verification and blockers.
 
 ## Resume and finish
 

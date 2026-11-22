@@ -74,7 +74,6 @@ if(RPICO_DOCS_DRIVE)
             firmware/verify_docs_image.cmake
             configurator/README.txt
             LICENSE
-            docs/HARDWARE.md
         VERBATIM
         COMMENT "Creating the read-only FAT12 documentation image"
     )

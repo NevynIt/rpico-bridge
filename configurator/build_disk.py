@@ -213,12 +213,10 @@ def verify_image(image, expected_files):
 
 def project_files(app_path):
     script_dir = Path(__file__).resolve().parent
-    root = script_dir.parent
     return [
         ("CONFIG.HTM", Path(app_path).read_bytes()),
         ("README.TXT", (script_dir / "README.txt").read_bytes()),
-        ("HARDWARE.MD", (root / "docs" / "HARDWARE.md").read_bytes()),
-        ("LICENSE.TXT", (root / "LICENSE").read_bytes()),
+        ("LICENSE.TXT", (script_dir.parent / "LICENSE").read_bytes()),
     ]
 
 

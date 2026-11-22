@@ -13,6 +13,7 @@ from build_disk import (
     TOTAL_SECTORS,
     build_image,
     extract_files,
+    project_files,
 )
 
 
@@ -28,7 +29,6 @@ class Fat12ImageTests(unittest.TestCase):
         files = [
             ("CONFIG.HTM", b"<html>offline app</html>"),
             ("README.TXT", b"quick start\n"),
-            ("HARDWARE.MD", b"board guide\n"),
             ("LICENSE.TXT", b"MIT License\n"),
         ]
         first = build_image(files)
@@ -36,6 +36,9 @@ class Fat12ImageTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(first), 512 * 1024)
         self.assertEqual(extract_files(first), dict(files))
+
+        drive_names = [name for name, _ in project_files(__file__)]
+        self.assertEqual(drive_names, ["CONFIG.HTM", "README.TXT", "LICENSE.TXT"])
 
     def test_rejects_a_disk_full_of_file_content(self):
         with self.assertRaisesRegex(ValueError, "exceed"):

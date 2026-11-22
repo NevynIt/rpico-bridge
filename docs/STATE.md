@@ -1,54 +1,48 @@
 # Project state
 
-**Built-in documentation drive.** The regular firmware's 512 KiB FAT12 volume
-was enumerated and read-only behavior checked on a Linux host. CDC and USB MIDI
-also enumerated. The configurator has not yet connected to the board from the
-mounted volume, and audible live routing has not been tested in this session.
+**Built-in documentation view.** Current firmware is flashed and verified on
+the Pico. Its 512 KiB FAT12 volume includes CONFIG.HTM with embedded guide
+content, README.TXT and LICENSE.TXT. CDC reports two online MIDI devices and
+the saved APC cable exclusion. The browser's earlier controller build worked
+per user report; physical keyboard use on this update is unverified.
 
 ## Physical verification
 
-- UF2 SHA-256
-  `2660d9ad9f910563fcce85fc7c104c330141ec452a1d91b175b2c7d0e431cc10`
-  matched the staged artifact and passed picotool flash verification. Linux
-  recognized a 512 KiB removable disk with CDC ACM, USB MIDI and usb-storage
-  kernel bindings.
-- All 1024 drive sectors matched generated-image SHA-256
-  `53c1a2e8ff993ff03e419437b405a889ce36de9d47bc27ca89a588be63859ac9`.
-  MODE SENSE reported write protection. WRITE10 returned DATA PROTECT, and a
-  free sector was unchanged.
-- An initial CDC `R GET` succeeded while MSC was mounted. The current and
-  previous image reported `host=2`, MicroFreak and APC online, Circuit Tracks
-  offline, and saved APC control-cable rule `R RULE 4 1 255 3 0 255`. Subsequent
-  raw USB/IP claim/rebind retries timed out on CDC GET despite kernel bindings
-  for CDC, MIDI and MSC. Cause is undetermined.
-- Chromium rendered `CONFIG.HTM` extracted from the drive and exposed Web Serial
-  and Web MIDI APIs. Live browser-to-board use, normal desktop reconnection,
-  Windows mounted-drive behavior and audible live routing remain unconfirmed.
+- Current UF2 SHA-256
+  `0750b25e0020ac8f365104659ee307897063a005b2f6cf3bbf553a9938b093e1`
+  reproduced from checkout and passed picotool flash verification.
+- Direct MSC read of all 1024 sectors matched the 512 KiB image SHA-256
+  `9b58f7a679007b723c1eb866d66afea3ec21f039e82bc8f163d972d9a7c4b29f`.
+  MODE SENSE reports read-only.
+- CDC R GET passed on the updated board with two MIDI devices online. Names,
+  IDs and saved APC rule `R RULE 4 1 255 3 0 255` were retained.
+- Chromium rendered CONFIG.HTM from a local file and showed the controls.
+  Live browser connection to the board and Windows drive mounting remain
+  unverified. No physical key-playing test was reported for this update.
 
 ## Build and software verification
 
-- Normal, CDC bench and `RPICO_DOCS_DRIVE=OFF` Release builds pass. The OFF UF2
-  is bit-for-bit identical to the previous drive-free build.
-- The deterministic 512 KiB FAT12 image passes fsck and mtools checks. Its used
-  clusters fit the format limit and the embedded image stays below the reserved
-  settings flash area. It contains `CONFIG.HTM`, `README.TXT`, `HARDWARE.MD` and
-  `LICENSE.TXT` under volume label `RPICOBRIDGE`.
-- Three Python drive-image tests, 10 configurator Node tests and native CTest
-  2/2 pass. Browser tests cover the frontend, but not a live device session.
+- Firmware and drive tests pass. The prior normal, bench and `RPICO_DOCS_DRIVE=OFF`
+  builds succeeded; OFF was bit-identical to the prior drive-free UF2.
+- The fixed FAT12 image is 512 KiB, uses `RPICOBRIDGE`, and contains
+  CONFIG.HTM, README.TXT and LICENSE.TXT. Its full sector read matched the
+  generated image; earlier image fsck/mtools checks passed.
+- Python drive tests pass 3/3, native CTest 2/2, and the existing 10 protocol
+  tests pass. Local-file browser checks rendered controls. Keyboard and console
+  interactions have stub coverage; detailed harness/physical key use is pending.
 - The default build requires Node.js, Python 3 and one-time `npm ci
-  --prefix configurator`. It creates `build/docs_drive/rpico-bridge.img` and
+  --prefix configurator`. It generates `build/docs_drive/rpico-bridge.img` and
   embeds it in UF2. `-DRPICO_DOCS_DRIVE=OFF` omits the image and build dependency.
-- Open `CONFIG.HTM` directly from the mounted volume in desktop Chrome or Edge.
-  Allow Web Serial and Web MIDI access. The app runs offline without a server.
-  Save routing and LED settings through CDC; the drive is read-only, not settings
-  storage.
+- Open CONFIG.HTM from the mounted volume in desktop Chrome or Edge. Allow Web
+  Serial and Web MIDI access. The app runs offline without a server. Save route
+  and LED settings through CDC; the drive is read-only, not settings storage.
 
 ## Next checks
 
-1. Connect the browser configurator to the board from the mounted drive and
-   verify route and LED read/write.
-2. Test the volume mount and permissions on Windows.
-3. Verify audible multi-device routing and reconnect under live traffic.
+1. Verify live browser serial/MIDI connection, keyboard and console behavior on
+   the updated image. Check Windows drive mounting.
+2. Test audible multi-device routing, reconnect and soak under traffic.
+3. Verify loaded standalone power with the chosen hub and supply.
 
 ## Constraints
 

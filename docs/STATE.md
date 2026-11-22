@@ -1,35 +1,39 @@
 # Project state
 
-**Built-in documentation view.** Current firmware is flashed and verified on
-the Pico. Its 512 KiB FAT12 volume includes CONFIG.HTM with embedded guide
-content, README.TXT and LICENSE.TXT. CDC reports two online MIDI devices and
-the saved APC cable exclusion. The browser's earlier controller build worked
-per user report; physical keyboard use on this update is unverified.
+**Built-in documentation view.** The latest firmware and 512 KiB FAT12 drive
+are flashed and verified. CONFIG.HTM contains the embedded guide; README.TXT
+points to it and LICENSE.TXT carries the project license. CDC retained the
+catalog and APC exclusion. IDs 3–5 were offline in this check. The user reports
+the earlier browser controller worked. Direct browser connection to this build
+and PIO routing were not tested.
 
 ## Physical verification
 
-- Current UF2 SHA-256
-  `0750b25e0020ac8f365104659ee307897063a005b2f6cf3bbf553a9938b093e1`
-  reproduced from checkout and passed picotool flash verification.
-- Direct MSC read of all 1024 sectors matched the 512 KiB image SHA-256
-  `9b58f7a679007b723c1eb866d66afea3ec21f039e82bc8f163d972d9a7c4b29f`.
-  MODE SENSE reports read-only.
-- CDC R GET passed on the updated board with two MIDI devices online. Names,
-  IDs and saved APC rule `R RULE 4 1 255 3 0 255` were retained.
-- Chromium rendered CONFIG.HTM from a local file and showed the controls.
-  Live browser connection to the board and Windows drive mounting remain
-  unverified. No physical key-playing test was reported for this update.
+- UF2 SHA-256
+  `6f30d1bfc011fcfd40ea26eacc95b84212b24cc84d0ff098b4f8de012a9b0a94`
+  matched an independent staged build and passed picotool flash verification.
+- Direct MSC read of all 1024 sectors matched image SHA-256
+  `2874a5b409776b7a824ec3459296c7f6b51de734a0759e0c75036b88c5b1f775`.
+  MODE SENSE reported read-only.
+- CDC GET returned the same seven RGB values and timings twice. The catalog and
+  APC exclusion `R RULE 4 1 255 3 0 255` remained unchanged. Device IDs 3–5
+  were offline in this check.
+- Executable firmware bytes match the previous build outside the documentation
+  image. No PIO routing test was run for this update.
+- Local Chromium with mocked Web Serial verified automatic LED load, manual
+  reload without writes, failed initial read/retry and exact values. Direct
+  browser-to-Pico and Windows drive tests remain unverified.
 
 ## Build and software verification
 
-- Firmware and drive tests pass. The prior normal, bench and `RPICO_DOCS_DRIVE=OFF`
+- Firmware and drive tests pass. Normal, bench and `RPICO_DOCS_DRIVE=OFF`
   builds succeeded; OFF was bit-identical to the prior drive-free UF2.
 - The fixed FAT12 image is 512 KiB, uses `RPICOBRIDGE`, and contains
   CONFIG.HTM, README.TXT and LICENSE.TXT. Its full sector read matched the
   generated image; earlier image fsck/mtools checks passed.
-- Python drive tests pass 3/3, native CTest 2/2, and the existing 10 protocol
-  tests pass. Local-file browser checks rendered controls. Keyboard and console
-  interactions have stub coverage; detailed harness/physical key use is pending.
+- Python drive tests pass 3/3, native CTest 2/2 and 10 protocol tests pass.
+  Keyboard and console interactions have stub coverage; detailed harness and
+  physical key use remain pending.
 - The default build requires Node.js, Python 3 and one-time `npm ci
   --prefix configurator`. It generates `build/docs_drive/rpico-bridge.img` and
   embeds it in UF2. `-DRPICO_DOCS_DRIVE=OFF` omits the image and build dependency.

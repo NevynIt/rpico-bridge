@@ -54,6 +54,8 @@ function App() {
   const [ledBusy, setLedBusy] = useState(false);
   const [ledNote, setLedNote] = useState('Connect the board to read its LED settings.');
   const bridge = useRef(null);
+  const ledReadInFlight = useRef(false);
+  const ledRequestId = useRef(0);
   const midiAccess = useRef(null);
   const outputRef = useRef(null);
   const held = useRef(new Map());
@@ -193,36 +195,49 @@ function App() {
         onState: text => setSerial(text),
       });
       bridge.current = instance;
+      setLedSupported(false);
+      setLedSaved(null);
+      setLedNote('Reading settings…');
       await instance.open();
       setSerialNote('Choose a command or type help. Device welcome and help text appear here.');
       await refreshRoutes(instance);
-      await loadLedSettings(instance);
+      await loadLedSettings(instance, true);
     } catch (error) {
       setSerial(error.message === 'The user aborted a request.' ? 'Disconnected' : 'Error');
       setSerialNote(error.message || 'Could not connect to the board.');
       setLedBusy(false);
     }
   }
-  async function loadLedSettings(target) {
+  async function loadLedSettings(target, afterRouteRead = false) {
+    if (!target || target.closed || ledReadInFlight.current) return;
+    if (working && !afterRouteRead) {
+      setLedNote('Wait for the current board request to finish, then read again.');
+      return;
+    }
+    ledReadInFlight.current = true;
+    const requestId = ++ledRequestId.current;
     setLedBusy(true);
-    setLedSupported(false);
-    setLedSaved(null);
     setLedNote('Reading settings…');
+    const sameRequest = () => bridge.current === target && ledRequestId.current === requestId;
+    const current = () => sameRequest() && !target.closed;
     try {
       const settings = await target.getLedSettings();
+      if (!current()) return;
       setLedSettings(settings);
       setLedSaved({ ...settings });
       setLedSupported(true);
       setLedNote('Settings loaded. Changes stay local until saved.');
     } catch (error) {
-      const unavailable = error.message.startsWith('R ERR ') || error.message.includes('Timed out');
-      setLedNote(unavailable
-        ? 'LED settings are unavailable on this firmware. Routing controls remain available.'
-        : `Could not load LED settings. ${error.message}`);
-    } finally { setLedBusy(false); }
+      if (current()) setLedNote(`Could not read LED settings. Previous values and edits were kept. ${error.message}`);
+    } finally {
+      if (requestId === ledRequestId.current) {
+        ledReadInFlight.current = false;
+        if (sameRequest()) setLedBusy(false);
+      }
+    }
   }
   async function saveLedSettings() {
-    if (!bridge.current || !ledSupported) return;
+    if (!bridge.current || !ledSupported || working || ledBusy || ledReadInFlight.current) return;
     try {
       validateLedSettings(ledSettings);
       setLedBusy(true);
@@ -236,6 +251,9 @@ function App() {
   async function disconnectSerial(show = true) {
     const current = bridge.current;
     bridge.current = null;
+    ++ledRequestId.current;
+    ledReadInFlight.current = false;
+    setLedBusy(false);
     if (current) await current.close();
     if (show) setSerial('Disconnected');
   }
@@ -386,13 +404,13 @@ function App() {
       h('section', { className: 'panel led-panel' },
         h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Status LED')), badge(ledBusy ? 'Working' : ledSupported ? (ledDirty ? 'Unsaved changes' : 'Saved on board') : 'Not loaded', ledDirty ? '' : 'count')),
         h('p', { className: 'muted' }, 'Edit the status colors and activity timings, then save once. The board may restart after saving.'),
-        h('p', { className: 'led-note', role: 'status', 'aria-live': 'polite' }, ledNote),
+        h('p', { className: 'led-note', role: 'status', 'aria-live': 'polite', 'data-testid': 'led-note' }, ledNote),
         h('div', { className: 'led-timings' },
           h('label', null, 'MIDI pulse (ms)', h('input', { type: 'number', min: 2, max: 100, step: 1, value: ledSettings.pulse_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, pulse_ms: Number(e.target.value) })) })),
           h('label', null, 'Mouse phase (ms)', h('input', { type: 'number', min: 10, max: 1000, step: 1, value: ledSettings.phase_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, phase_ms: Number(e.target.value) })) })),
           h('label', null, 'Mouse hold (ms)', h('input', { type: 'number', min: 10, max: 5000, step: 1, value: ledSettings.hold_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, hold_ms: Number(e.target.value) })) }))),
-        h('div', { className: 'led-colors' }, ...LED_COLOR_FIELDS.map(([field, label]) => h('label', { key: field }, label, h('input', { type: 'color', value: `#${ledSettings[field]}`, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, [field]: e.target.value.slice(1).toUpperCase() })) }), h('code', null, ledSettings[field])))),
-        h('div', { className: 'led-actions' }, h('button', { className: 'primary', onClick: saveLedSettings, disabled: serial !== 'Connected' || !ledSupported || ledBusy || !ledDirty }, ledBusy ? 'Working…' : 'Save LED settings'))),
+        h('div', { className: 'led-colors' }, ...LED_COLOR_FIELDS.map(([field, label]) => h('label', { key: field }, label, h('span', { className: 'led-swatch', 'data-testid': `led-swatch-${field}`, style: { backgroundColor: `#${ledSettings[field]}` }, 'aria-hidden': 'true' }), h('input', { type: 'color', 'data-testid': `led-color-${field}`, value: `#${ledSettings[field]}`, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, [field]: e.target.value.slice(1).toUpperCase() })) }), h('code', { 'data-testid': `led-hex-${field}` }, `#${ledSettings[field]}`)))),
+        h('div', { className: 'led-actions' }, h('button', { className: 'secondary', onClick: () => loadLedSettings(bridge.current), disabled: serial !== 'Connected' || ledBusy || working, 'data-testid': 'read-led-settings' }, ledBusy ? 'Reading…' : 'Read from board'), h('button', { className: 'primary', onClick: saveLedSettings, disabled: serial !== 'Connected' || !ledSupported || ledBusy || working || !ledDirty }, ledBusy ? 'Please wait…' : 'Save LED settings'))),
     ) : h('section', { className: 'panel docs-view', 'data-testid': 'docs-view' },
       ...DOCS_PAGES.map(doc => h('article', { className: 'docs-page', key: doc.id },
         h('h1', null, doc.title),

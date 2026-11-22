@@ -216,7 +216,7 @@ export class SerialBridge {
     return promise;
   }
   async getLedSettings() {
-    const line = await this.commandUntil('R LED GET', value => value.startsWith('R LED '), 1500);
+    const line = await this.commandUntil('R LED GET', value => /^R LED \d+\s/.test(value), 1500);
     return parseLedSettings(line);
   }
   async setLedSettings(settings) {

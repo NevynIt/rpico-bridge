@@ -132,6 +132,10 @@ during bursts and can be set from 2 to 100 ms. Mouse phase defaults to 250 ms
 and hold to 1500 ms. These describe firmware defaults, not visual confirmation
 of the current board.
 
+The panel automatically reads the saved palette when the board connects. Use
+**Read from board** to reload it later. A successful read replaces pending LED
+edits in the panel without saving them.
+
 On the CDC console, `help led` lists LED commands and `led` prints current or
 staged settings. Stage changes with `led color ready|hub|midi|mouse|traffic|bootsel|error RRGGBB`,
 `led timing MIDI_PULSE_MS MOUSE_PHASE_MS MOUSE_HOLD_MS` or `led defaults`. Use

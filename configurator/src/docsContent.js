@@ -45,7 +45,8 @@ export const DOCS_PAGES = [
       {
         heading: 'Status LED',
         paragraphs: [
-          'The Status LED panel reads seven colors and the MIDI and mouse activity timings from the board. Change colors or timings, then Save LED settings. A successful save is durable and may restart the bridge; reconnect if CDC disconnects.',
+          'The Status LED panel automatically reads saved colors and MIDI/mouse activity timings when the board connects. Read from board reloads those saved settings later. A successful read replaces pending LED edits in the panel without saving them.',
+          'Change colors or timings, then Save LED settings. A successful save is durable and may restart the bridge; reconnect if CDC disconnects.',
           'Default colors are ready gray, hub blue, MIDI-interface dim green (#000300), mouse cyan, MIDI traffic amber, BOOTSEL magenta and initialization error red. MIDI traffic pulses for 8 ms by default; bursts merge. The pulse range is 2–100 ms. Mouse phase and hold default to 250 ms and 1500 ms.',
           'Colors describe firmware states and are configurable. A blue hub state means TinyUSB accepted hub configuration; it does not prove that a MIDI interface mounted. HID reports are observed for status only and are not routed as pointer input.'
         ]

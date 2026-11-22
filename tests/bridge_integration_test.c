@@ -17,7 +17,11 @@
 static void expect_output(uint8_t endpoint, const uint8_t expected[4])
 {
     uint8_t actual[4];
-    CHECK(usb_mock_pop_output(endpoint, actual));
+    if (!usb_mock_pop_output(endpoint, actual)) {
+        fprintf(stderr, "%s:%d: no packet queued for endpoint %u\n",
+                __FILE__, __LINE__, endpoint);
+        exit(EXIT_FAILURE);
+    }
     CHECK(memcmp(actual, expected, 4) == 0);
 }
 
@@ -43,6 +47,42 @@ static void test_concurrent_traffic_no_echo(void)
     CHECK(bridge.packets_received == 2);
     CHECK(bridge.packets_sent == 2);
     CHECK(usb_mock_flush_count() == 1);
+}
+
+static void test_native_last_host_and_cdc_fan_out(void)
+{
+    const uint8_t last_host_endpoint = USB_BRIDGE_HOST_ENDPOINT_FIRST +
+                                       USB_BRIDGE_HOST_ENDPOINT_COUNT - 1u;
+    usb_mock_reset();
+    usb_mock_set_endpoint(0, 1, 1, 100);
+    usb_mock_set_endpoint(last_host_endpoint, 1, 1, 108);
+    usb_mock_set_endpoint(USB_BRIDGE_CDC_ENDPOINT, 1, 1, 109);
+    bridge_t bridge;
+    bridge_init(&bridge);
+
+    const uint8_t from_native[4] = {0x09, 0x92, 0x21, 0x31};
+    const uint8_t from_last_host[4] = {0x0b, 0xb4, 0x46, 0x57};
+    const uint8_t from_cdc[4] = {0x0c, 0xc1, 0x35, 0x00};
+    usb_mock_push_input(0, from_native);
+    usb_mock_push_input(last_host_endpoint, from_last_host);
+    usb_mock_push_input(USB_BRIDGE_CDC_ENDPOINT, from_cdc);
+
+    bridge_step(&bridge);
+    bridge_step(&bridge);
+
+    expect_output(0, from_last_host);
+    expect_output(0, from_cdc);
+    expect_output(last_host_endpoint, from_native);
+    expect_output(last_host_endpoint, from_cdc);
+    expect_output(USB_BRIDGE_CDC_ENDPOINT, from_native);
+    expect_output(USB_BRIDGE_CDC_ENDPOINT, from_last_host);
+
+    uint8_t packet[4];
+    CHECK(!usb_mock_pop_output(0, packet));
+    CHECK(!usb_mock_pop_output(last_host_endpoint, packet));
+    CHECK(!usb_mock_pop_output(USB_BRIDGE_CDC_ENDPOINT, packet));
+    CHECK(bridge.packets_received == 3);
+    CHECK(bridge.packets_sent == 6);
 }
 
 static void test_write_backpressure_and_reconnect(void)
@@ -77,6 +117,7 @@ static void test_write_backpressure_and_reconnect(void)
 int main(void)
 {
     test_concurrent_traffic_no_echo();
+    test_native_last_host_and_cdc_fan_out();
     test_write_backpressure_and_reconnect();
     puts("bridge_integration_test: passed");
     return EXIT_SUCCESS;

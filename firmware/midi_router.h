@@ -8,8 +8,8 @@
 extern "C" {
 #endif
 
-/* Endpoint 0 is the native USB device; host interface IDs occupy 1..8. */
-#define MIDI_ROUTER_MAX_ENDPOINTS 9u
+/* Endpoint 0 native, IDs 1..8 PIO MIDI, ID 9 CDC MIDI. */
+#define MIDI_ROUTER_MAX_ENDPOINTS 10u
 #define MIDI_ROUTER_MAX_CABLES 16u
 #define MIDI_ROUTER_QUEUE_DEPTH 16u
 #define MIDI_ROUTER_PACKET_SIZE 4u

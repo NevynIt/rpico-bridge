@@ -7,8 +7,9 @@
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 #include "pico/status_led.h"
-#if defined(RPICO_CDC_BENCH)
 #include "cdc_bench.h"
+#if !defined(RPICO_CDC_BENCH)
+#include "usb_host_hid.h"
 #endif
 
 static bridge_t bridge;
@@ -18,14 +19,17 @@ static bridge_t bridge;
 #define MIDI_ACTIVITY_HALF_PERIOD_MS 60u
 
 typedef struct {
-    uint32_t packets_seen;
+    uint32_t events_seen;
     uint32_t active_until_ms;
     uint32_t next_toggle_ms;
     bool active;
-    bool amber_on;
-} midi_activity_t;
+    bool phase_on;
+} activity_t;
 
-static midi_activity_t midi_activity;
+static activity_t midi_activity;
+#if !defined(RPICO_CDC_BENCH)
+static activity_t mouse_activity;
+#endif
 
 static unsigned host_interface_count(void)
 {
@@ -33,7 +37,8 @@ static unsigned host_interface_count(void)
     return 0;
 #else
     unsigned count = 0;
-    for (uint8_t index = USB_BRIDGE_HOST_ENDPOINT_FIRST; index < USB_BRIDGE_ENDPOINT_COUNT; ++index) {
+    for (uint8_t index = USB_BRIDGE_HOST_ENDPOINT_FIRST;
+         index < USB_BRIDGE_HOST_ENDPOINT_FIRST + USB_BRIDGE_HOST_ENDPOINT_COUNT; ++index) {
         if (bridge.endpoints[index].generation != 0) {
             ++count;
         }
@@ -42,27 +47,27 @@ static unsigned host_interface_count(void)
 #endif
 }
 
-static void update_midi_activity(uint32_t now_ms)
+static void update_activity(activity_t *activity, uint32_t event_count,
+                            uint32_t now_ms)
 {
-    const uint32_t received = bridge.packets_received;
-    if (received != midi_activity.packets_seen) {
-        midi_activity.packets_seen = received;
-        if (!midi_activity.active) {
-            midi_activity.amber_on = true;
-            midi_activity.next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
+    if (event_count != activity->events_seen) {
+        activity->events_seen = event_count;
+        if (!activity->active) {
+            activity->phase_on = true;
+            activity->next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
         }
-        midi_activity.active = true;
-        midi_activity.active_until_ms = now_ms + MIDI_ACTIVITY_WINDOW_MS;
+        activity->active = true;
+        activity->active_until_ms = now_ms + MIDI_ACTIVITY_WINDOW_MS;
     }
 
-    if (midi_activity.active &&
-        (int32_t)(now_ms - midi_activity.active_until_ms) >= 0) {
-        midi_activity.active = false;
-        midi_activity.amber_on = false;
-    } else if (midi_activity.active &&
-               (int32_t)(now_ms - midi_activity.next_toggle_ms) >= 0) {
-        midi_activity.amber_on = !midi_activity.amber_on;
-        midi_activity.next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
+    if (activity->active &&
+        (int32_t)(now_ms - activity->active_until_ms) >= 0) {
+        activity->active = false;
+        activity->phase_on = false;
+    } else if (activity->active &&
+               (int32_t)(now_ms - activity->next_toggle_ms) >= 0) {
+        activity->phase_on = !activity->phase_on;
+        activity->next_toggle_ms = now_ms + MIDI_ACTIVITY_HALF_PERIOD_MS;
     }
 }
 
@@ -100,7 +105,10 @@ int main(void)
     // PIO USB requires an integer multiple of its 12 MHz bit clock.
     set_sys_clock_khz(120000, true);
     bridge_init(&bridge);
-    midi_activity.packets_seen = bridge.packets_received;
+    midi_activity.events_seen = bridge.packets_received;
+#if !defined(RPICO_CDC_BENCH)
+    mouse_activity.events_seen = usb_host_hid_activity_count();
+#endif
     bool usb_available = usb_bridge_init();
     // Initialize after PIO USB has reserved its instruction memory and state machines.
     bool led_available = status_led_init();
@@ -120,25 +128,31 @@ int main(void)
         bridge_step(&bridge);
 
 #if !defined(RPICO_CDC_BENCH)
-        uint8_t discarded_cdc[32];
-        usb_bridge_cdc_read(discarded_cdc, sizeof(discarded_cdc));
+        usb_host_hid_task();
 #endif
 
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-        update_midi_activity(now_ms);
+        update_activity(&midi_activity, bridge.packets_received, now_ms);
+#if !defined(RPICO_CDC_BENCH)
+        update_activity(&mouse_activity, usb_host_hid_activity_count(), now_ms);
+#endif
         if (led_available && (int32_t)(now_ms - next_led_ms) >= 0) {
             const uint32_t blue = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 0, 12);
             const uint32_t green = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 12, 0);
             const uint32_t amber = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 6, 0);
+#if !defined(RPICO_CDC_BENCH)
+            const uint32_t cyan = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0, 12, 12);
+#endif
             uint32_t desired_color = host_interface_count() ? green : blue;
-#if defined(RPICO_CDC_BENCH)
             const uint32_t magenta = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(12, 0, 12);
             if (cdc_bench_bootsel_pending()) {
                 desired_color = magenta;
-            } else
+            } else if (midi_activity.active) {
+                desired_color = midi_activity.phase_on ? amber : desired_color;
+#if !defined(RPICO_CDC_BENCH)
+            } else if (mouse_activity.active) {
+                desired_color = mouse_activity.phase_on ? cyan : desired_color;
 #endif
-            if (midi_activity.active && midi_activity.amber_on) {
-                desired_color = amber;
             }
             update_status_led(desired_color, &displayed_color);
             next_led_ms = now_ms + LED_UPDATE_INTERVAL_MS;
@@ -147,8 +161,6 @@ int main(void)
             report_status(host_interface_count());
             next_report_ms = now_ms + 1000u;
         }
-#if defined(RPICO_CDC_BENCH)
         cdc_bench_service_reset(now_ms);
-#endif
     }
 }

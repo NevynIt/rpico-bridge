@@ -3,11 +3,12 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "midi_router.h"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
+#include "midi_router.h"
 
+#define CDC_CONTROL_MAX_BYTES_PER_TASK 32u
 #define CDC_BENCH_MAX_LINE 10u
 #define CDC_BENCH_PACKET_TEXT_SIZE 11u
 
@@ -16,6 +17,53 @@ static uint8_t input_length;
 static bool discard_line;
 static bool bootsel_pending;
 static uint32_t bootsel_deadline_ms;
+
+static int hex_value(uint8_t character);
+
+static void process_character(uint8_t character, usb_bridge_packet_t *packet,
+                              bool *packet_ready)
+{
+    if (character != '\n') {
+        if (!discard_line) {
+            if (input_length >= sizeof(input_line)) {
+                input_length = 0;
+                discard_line = true;
+            } else {
+                input_line[input_length++] = (char)character;
+            }
+        }
+        return;
+    }
+
+    const bool bootsel_line = !discard_line && (input_length == 7u) &&
+                              (memcmp(input_line, "BOOTSEL", 7u) == 0);
+    if (bootsel_line) {
+        if (!bootsel_pending) {
+            bootsel_pending = true;
+            bootsel_deadline_ms = to_ms_since_boot(get_absolute_time()) + 200u;
+        }
+    }
+
+    if (!bootsel_line && !discard_line && (packet != NULL) &&
+        (input_length == CDC_BENCH_MAX_LINE) &&
+        (input_line[0] == 'M') && (input_line[1] == ' ')) {
+        bool valid = true;
+        for (uint8_t index = 0; index < MIDI_ROUTER_PACKET_SIZE; ++index) {
+            const int high = hex_value((uint8_t)input_line[2u + 2u * index]);
+            const int low = hex_value((uint8_t)input_line[3u + 2u * index]);
+            if ((high < 0) || (low < 0)) {
+                valid = false;
+                break;
+            }
+            packet->bytes[index] = (uint8_t)((high << 4) | low);
+        }
+        /* The CDC bench is one logical cable. */
+        *packet_ready = valid && ((packet->bytes[0] >> 4) == 0);
+    }
+
+    input_length = 0;
+    discard_line = false;
+}
 
 static int hex_value(uint8_t character)
 {
@@ -31,68 +79,25 @@ static int hex_value(uint8_t character)
     return -1;
 }
 
-static bool parse_complete_line(usb_bridge_packet_t *packet)
-{
-    if ((input_length == 7u) && (memcmp(input_line, "BOOTSEL", 7u) == 0)) {
-        if (!bootsel_pending) {
-            bootsel_pending = true;
-            bootsel_deadline_ms = to_ms_since_boot(get_absolute_time()) + 200u;
-        }
-        return false;
-    }
-
-    if ((input_length != CDC_BENCH_MAX_LINE) ||
-        (input_line[0] != 'M') || (input_line[1] != ' ')) {
-        return false;
-    }
-
-    for (uint8_t index = 0; index < MIDI_ROUTER_PACKET_SIZE; ++index) {
-        const int high = hex_value((uint8_t)input_line[2u + 2u * index]);
-        const int low = hex_value((uint8_t)input_line[3u + 2u * index]);
-        if ((high < 0) || (low < 0)) {
-            return false;
-        }
-        packet->bytes[index] = (uint8_t)((high << 4) | low);
-    }
-
-    /* The CDC bench is one logical cable. */
-    return (packet->bytes[0] >> 4) == 0;
-}
-
 bool cdc_bench_read_packet(usb_bridge_packet_t *packet)
 {
     if ((packet == NULL) || bootsel_pending || !tud_cdc_connected()) {
         return false;
     }
 
-    while (tud_cdc_available() > 0u) {
+    uint32_t consumed = 0;
+    while ((tud_cdc_available() > 0u) &&
+           (consumed < CDC_CONTROL_MAX_BYTES_PER_TASK)) {
         uint8_t character;
         if (tud_cdc_read(&character, 1u) != 1u) {
             return false;
         }
-
-        if (character == '\n') {
-            const bool parsed = !discard_line && parse_complete_line(packet);
-            input_length = 0;
-            discard_line = false;
-            if (bootsel_pending) {
-                return false;
-            }
-            if (parsed) {
-                return true;
-            }
-            continue;
+        ++consumed;
+        bool packet_ready = false;
+        process_character(character, packet, &packet_ready);
+        if (bootsel_pending || packet_ready) {
+            return packet_ready;
         }
-
-        if (discard_line) {
-            continue;
-        }
-        if (input_length >= CDC_BENCH_MAX_LINE) {
-            input_length = 0;
-            discard_line = true;
-            continue;
-        }
-        input_line[input_length++] = (char)character;
     }
 
     return false;

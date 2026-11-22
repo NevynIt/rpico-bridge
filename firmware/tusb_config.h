@@ -30,6 +30,9 @@
 #define CFG_TUH_ENUMERATION_BUFSIZE 512
 #define CFG_TUH_MIDI 8
 #define CFG_TUH_MIDI_STREAM_API 0
+#define CFG_TUH_HID 8
+/* Do not change boot/report protocol on unrelated HID interfaces. */
+#define CFG_TUH_HID_SET_PROTOCOL_ON_ENUM 0
 #endif
 
 #ifndef CFG_TUSB_MEM_SECTION

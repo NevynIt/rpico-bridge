@@ -4,10 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Endpoint 0 is the native USB device interface. Host interfaces occupy 1..8. */
-#define USB_BRIDGE_ENDPOINT_COUNT 9u
+/* Endpoint 0 is native MIDI; PIO MIDI slots are 1..8; CDC MIDI is slot 9. */
+#define USB_BRIDGE_ENDPOINT_COUNT 10u
 #define USB_BRIDGE_HOST_ENDPOINT_FIRST 1u
 #define USB_BRIDGE_HOST_ENDPOINT_COUNT 8u
+#define USB_BRIDGE_CDC_ENDPOINT \
+    (USB_BRIDGE_HOST_ENDPOINT_FIRST + USB_BRIDGE_HOST_ENDPOINT_COUNT)
 
 typedef struct {
     uint8_t rx_cables;

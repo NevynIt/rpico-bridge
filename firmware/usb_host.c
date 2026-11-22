@@ -7,9 +7,7 @@
 #include <stddef.h>
 
 #include "usb_bridge.h"
-#if defined(RPICO_CDC_BENCH)
 #include "cdc_bench.h"
-#endif
 
 #if TUSB_VERSION_NUMBER != 2100
 #error "rpico-bridge USB transport requires TinyUSB 0.21.0"
@@ -26,9 +24,7 @@
 
 static usb_bridge_endpoint_t endpoints[USB_BRIDGE_ENDPOINT_COUNT];
 static uint32_t next_generation = 1;
-#if defined(RPICO_CDC_BENCH)
-static bool cdc_bench_dtr_active;
-#endif
+static bool cdc_dtr_active;
 
 static uint32_t generation_next(void) {
     uint32_t result = next_generation++;
@@ -108,16 +104,16 @@ bool usb_bridge_read_packet(uint8_t endpoint, usb_bridge_packet_t *out) {
     if (endpoint == 0) {
         return tud_midi_packet_read(out->bytes);
     }
-#if defined(RPICO_CDC_BENCH)
-    if (endpoint == USB_BRIDGE_HOST_ENDPOINT_FIRST) {
+    if (endpoint == USB_BRIDGE_CDC_ENDPOINT) {
         return cdc_bench_read_packet(out);
     }
-#endif
 #if !defined(RPICO_CDC_BENCH)
-    return tuh_midi_packet_read((uint8_t)(endpoint - USB_BRIDGE_HOST_ENDPOINT_FIRST), out->bytes);
-#else
-    return false;
+    if ((endpoint >= USB_BRIDGE_HOST_ENDPOINT_FIRST) &&
+        (endpoint < USB_BRIDGE_CDC_ENDPOINT)) {
+        return tuh_midi_packet_read((uint8_t)(endpoint - USB_BRIDGE_HOST_ENDPOINT_FIRST), out->bytes);
+    }
 #endif
+    return false;
 }
 
 bool usb_bridge_try_write(uint8_t endpoint, const usb_bridge_packet_t *packet) {
@@ -132,16 +128,16 @@ bool usb_bridge_try_write(uint8_t endpoint, const usb_bridge_packet_t *packet) {
     if (endpoint == 0) {
         return tud_midi_packet_write(packet->bytes);
     }
-#if defined(RPICO_CDC_BENCH)
-    if (endpoint == USB_BRIDGE_HOST_ENDPOINT_FIRST) {
+    if (endpoint == USB_BRIDGE_CDC_ENDPOINT) {
         return cdc_bench_write_packet(packet);
     }
-#endif
 #if !defined(RPICO_CDC_BENCH)
-    return tuh_midi_packet_write((uint8_t)(endpoint - USB_BRIDGE_HOST_ENDPOINT_FIRST), packet->bytes);
-#else
-    return false;
+    if ((endpoint >= USB_BRIDGE_HOST_ENDPOINT_FIRST) &&
+        (endpoint < USB_BRIDGE_CDC_ENDPOINT)) {
+        return tuh_midi_packet_write((uint8_t)(endpoint - USB_BRIDGE_HOST_ENDPOINT_FIRST), packet->bytes);
+    }
 #endif
+    return false;
 }
 
 uint32_t usb_bridge_cdc_write(const void *data, uint32_t length) {
@@ -165,31 +161,29 @@ void tud_mount_cb(void) {
 
 void tud_umount_cb(void) {
     endpoint_deactivate(0);
-#if defined(RPICO_CDC_BENCH)
-    endpoint_deactivate(USB_BRIDGE_HOST_ENDPOINT_FIRST);
-    cdc_bench_dtr_active = false;
+    endpoint_deactivate(USB_BRIDGE_CDC_ENDPOINT);
     cdc_bench_reset_session(false);
-#endif
+    cdc_dtr_active = false;
 }
 
-#if defined(RPICO_CDC_BENCH)
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     (void)rts;
     if (itf != 0) {
         return;
     }
 
-    if (dtr != cdc_bench_dtr_active) {
-        cdc_bench_dtr_active = dtr;
+    if (dtr != cdc_dtr_active) {
+        cdc_dtr_active = dtr;
         cdc_bench_reset_session(true);
         if (dtr) {
-            endpoint_activate(USB_BRIDGE_HOST_ENDPOINT_FIRST, 1, 1);
+            endpoint_activate(USB_BRIDGE_CDC_ENDPOINT, 1, 1);
         } else {
-            endpoint_deactivate(USB_BRIDGE_HOST_ENDPOINT_FIRST);
+            endpoint_deactivate(USB_BRIDGE_CDC_ENDPOINT);
         }
     }
 }
-#else
+
+#if !defined(RPICO_CDC_BENCH)
 void tuh_midi_mount_cb(uint8_t idx, const tuh_midi_mount_cb_t *mount_info) {
     (void)mount_info;
     if (idx < USB_BRIDGE_HOST_ENDPOINT_COUNT) {

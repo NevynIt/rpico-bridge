@@ -4,7 +4,7 @@ A USB MIDI 1.0 bridge prototype for the Waveshare RP2040-Zero. The firmware
 includes native MIDI and CDC interfaces, a PIO USB MIDI host and a packet router.
 Its ELF descriptors were verified to expose CDC control/data and USB Audio
 Control/MIDI Streaming interfaces, with one MIDI cable in each direction.
-Native USB was bench-checked, and an empty bus-powered hub configured in one
+Native USB was bench-checked. An empty bus-powered hub was configured in one
 isolated charger setup. Downstream MIDI devices and production hub wiring still
 need verification. See
 [project state](docs/STATE.md) for evidence and [hardware](docs/HARDWARE.md) for
@@ -38,14 +38,23 @@ cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 ```
 
-Fresh default and CDC bench Release builds passed. The native and ASan/UBSan test
-suites each passed 2/2.
+Clean-clone default and CDC bench UF2 hashes matched. Normal, bench and isolated
+Release builds were warning-free. Native and ASan/UBSan Debug suites each passed
+2/2, with LeakSanitizer disabled.
 
 ## CDC-only bench mode
 
-This opt-in bench build routes between the native USB-MIDI peer and a virtual
-MIDI peer on CDC through the same router. It runs without a physical PIO host
-or hub, keeps the existing device VID/PID, and defaults to OFF.
+All firmware images provide CDC diagnostics, a MIDI test peer, and the
+`BOOTSEL\n` command when DTR is asserted. The peer injects and monitors cable-zero
+USB-MIDI event packets in the `M <8 hex digits>\n` format. Its test traffic uses
+the same router, does not echo back to its source, and does not change `host=`.
+It is appended after the eight real host endpoint slots. It is available in
+regular and CDC bench builds.
+
+The opt-in CDC bench build defaults OFF. It runs without the physical PIO USB
+MIDI/HID host, for native-only tests. Regular firmware keeps the PIO host active
+so the CDC peer can be tested alongside real host endpoints. Both modes keep
+the existing device VID/PID.
 
 Build it in a separate directory:
 
@@ -54,14 +63,12 @@ cmake -S . -B build-cdc-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_CDC_BE
 cmake --build build-cdc-bench
 ```
 
-The owner used physical BOOT/RESET once to enter BOOTSEL and install the bench
-UF2. Flash verification succeeded, and the board re-enumerated as `1209:0001`
-with the same product. `BOOTSEL\n` from that bench image was verified to enter
-RP2040 ROM without manual buttons. The later LED bench image passed the same
-five bidirectional MIDI packets without echo and restored Linux bindings on bus
-1 device 12. Its `BOOTSEL\n` command entered ROM on bus 1 device 13. The board now
-runs a separate isolated hub diagnostic image. Reflash the CDC bench build before
-running its harness.
+The CDC bench UF2 passed flash verification and re-enumerated as `1209:0001`
+with the same product. Earlier bench images entered ROM without buttons using
+`BOOTSEL\n`. The final regular UF2 was verified and physically passed five MIDI
+packets in each direction without echo. Its `BOOTSEL\n` command entered ROM
+without buttons. The same UF2 was reloaded and the app re-enumerated. The Pico
+currently runs the final regular image with the hub disconnected.
 
 After asserting CDC DTR, write packets as `M <8 hex digits>\n` to inject them
 from the CDC peer. Native USB-MIDI packets routed to CDC are printed in the same
@@ -69,9 +76,8 @@ format. Each line carries one raw four-byte USB-MIDI event packet on cable zero.
 Packet lines can interleave with `midi ...` diagnostics. For example,
 `M 09903C40` sends a Note On from CDC to native USB-MIDI.
 
-Run the bench harness with an accessible raw USB device node. Get the bus and
-device numbers from `lsusb` and make sure the current user has permission to
-read and write the node.
+Run the harness with an accessible raw USB device node. Get bus and device
+numbers from `lsusb` and give the current user read and write permission.
 
 ```sh
 python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>
@@ -79,22 +85,27 @@ python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>
 
 The run passed five packets in each direction, including Note On/Off, SysEx
 start/end and realtime clock. Neither source received an echo. The harness
-restored Linux driver bindings after the run. No physical PIO host was active.
-In bench mode, `BOOTSEL\n` over CDC requests bootloader entry. Software
-re-entry was verified on the latest LED bench image. Hardware BOOT/RESET bypasses
-firmware.
+restored Linux driver bindings after the run. The hub was disconnected for this
+regular-image run.
+With CDC DTR asserted, `BOOTSEL\n` requests bootloader entry in every firmware
+image after about 200 ms of magenta. The final regular image physically entered
+ROM without buttons and then reflashed successfully. The magenta hue and timing
+were not independently distinguished. Hardware BOOT/RESET bypasses firmware.
 
 Regular firmware implements solid blue when ready with no host MIDI, green when
-a host MIDI interface is attached, amber activity on received MIDI in regular
-and bench modes, and red on initialization failure. Magenta indicates about
-200 ms before CDC-triggered BOOTSEL in opt-in bench mode only. The separate
-diagnostic image signals green after hub configuration, and this state was
-observed with an empty hub. Other updated LED behavior awaits visual
-verification. Hardware BOOT/RESET bypasses the LED code.
+a host MIDI interface is attached, cyan on recognized mouse reports, amber on
+received MIDI, and red on initialization failure. HID mouse handling only
+observes reports. It does not route native pointer input or add controls. The
+diagnostic image stays green after hub configuration and turns cyan on mouse
+reports. Green idle and cyan on mouse movement were visually confirmed on the
+temporary image with one HID receiver through the small hub on an isolated wall
+charger. On the final regular image the user saw blue and activity flashes. The
+rapid hues were hard to distinguish.
 
 ## Flash
 
 Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts. A native USB-only bench confirmed a blue LED and CDC diagnostics reporting `host=0`. Sending Note On and Note Off to native MIDI OUT increased the RX count from 0 to 2. An empty bus-powered USB-C hub was configured through the four-pin breakout with the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green was observed. No CDC capture was made while standalone. Downstream MIDI devices and an externally powered hub remain untested. This fixed setup does not establish production VBUS or standalone power requirements.
+Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts. A native USB-only bench confirmed a blue LED and CDC diagnostics reporting `host=0`. Sending Note On and Note Off to native MIDI OUT increased the RX count from 0 to 2. An empty bus-powered USB-C hub was configured through the four-pin breakout with the Pico powered by a 5 V wall charger and the laptop disconnected. Solid green was observed. No CDC capture was made while standalone. The USB descriptor announces 100 mA. Combined charger draw is unmeasured, and a laptop-powered experimental hub cascade has not been tested. Downstream MIDI devices and an externally powered hub remain untested. This fixed setup does not establish loaded standalone power or production VBUS requirements.
 
 Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may use it in their own private, in-house tests, but it may collide with other test devices. Do not distribute this firmware or use this ID on devices that will be redistributed, sold or manufactured; see the [pid.codes test PID terms](https://pid.codes/1209/0001/). See [project state](docs/STATE.md) for production identity status.
 

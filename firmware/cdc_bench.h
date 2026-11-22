@@ -6,7 +6,7 @@
 
 #include "usb_bridge.h"
 
-/* Read/write one raw USB-MIDI packet using the CDC bench text protocol. */
+/* Read/write one raw cable-zero USB-MIDI packet on the CDC virtual port. */
 bool cdc_bench_read_packet(usb_bridge_packet_t *packet);
 bool cdc_bench_write_packet(const usb_bridge_packet_t *packet);
 

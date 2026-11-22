@@ -1,48 +1,59 @@
 # Project state
 
 **Prototype status — native USB and CDC bench routing verified.** Native
-enumeration, CDC diagnostics, MIDI ingress, hardware RESET recovery and the
-CDC-only routing harness have passed. The bench build uses no physical PIO host.
-Hub operation and standalone power remain unverified. This is development
-firmware, not a release for distribution.
+enumeration, diagnostics, MIDI ingress, hardware RESET recovery and CDC-only
+routing have passed. The board currently runs a separate isolated hub
+diagnostic build. An empty bus-powered USB-C hub completed configuration in an
+isolated charger setup. Downstream routing and external-hub operation remain
+unverified.
+This is development firmware, not a release for distribution.
 
 ## Verification evidence
 
-- Native Release tests passed 2/2. AddressSanitizer and UndefinedBehaviorSanitizer
-  passed with LeakSanitizer disabled. Release UF2 builds from separate directories
-  were byte-identical.
-- ELF descriptors show CDC control/data and USB Audio Control/MIDI Streaming.
-  MIDI Streaming has one embedded jack per direction and VID/PID `1209:0001`.
-- Approved `picotool` identified RP2040 revision B2 in BOOTSEL, loaded the bench
-  UF2, verified flash and requested reboot. Physical BOOT/RESET entered BOOTSEL
-  once for this load. The board re-enumerated with product `USB MIDI 1.0 Bridge`.
-- With only native USB-C attached, elevated `lsusb` showed `1209:0001`, all four
-  CDC/MIDI interfaces and the expected classes. The owner confirmed the onboard
-  LED was blue.
-- Native CDC DTR/read returned `midi host=0 rx=0 tx=0 drops=0 invalid=0`. A Note
-  On and matching Note Off sent to native MIDI OUT each transferred four bytes.
-  CDC then reported `midi host=0 rx=2 tx=0 drops=0 invalid=0`.
-- Hardware RESET briefly removed the device from sysfs. It re-enumerated from
-  bus 1 device 3 to device 4 with the same product, VID/PID and four interface
-  numbers and classes. The owner reported the LED seemed uninterrupted.
-- `python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>` passed five
-  USB-MIDI packets in each direction. The set covered Note On/Off, SysEx
-  start/end and realtime clock. Neither source received an echo. The harness
-  restored Linux driver bindings. DTR diagnostics and packet lines can interleave.
-- The CDC bench option defaults OFF and ran without a physical PIO host. `BOOTSEL`
-  entry is compiled in that mode but has not been exercised over CDC. The bench
-  result does not verify routing to physical host devices.
+- Fresh default and CDC bench Release builds passed. Native and ASan/UBSan test
+  suites each passed 2/2. Separate Release UF2 builds were byte-identical.
+- ELF descriptors show CDC control/data and USB Audio Control/MIDI Streaming,
+  with one embedded MIDI jack per direction and VID/PID `1209:0001`.
+- Native enumeration showed all four interfaces. CDC diagnostics counted a Note
+  On and Note Off sent to MIDI OUT as `rx=2`, with `host=0`. Hardware RESET
+  recovered enumeration from bus 1 device 3 to device 4 with the same interfaces.
+- The CDC harness passed five exact MIDI packets in each direction with no echo
+  on either source. Linux bindings were restored after the test.
+- CDC `BOOTSEL\n` from the published bench build entered RP2040 ROM without
+  buttons. After the later LED image was flashed, `BOOTSEL\n` again entered ROM
+  without buttons. It enumerated as bus 1 device 13.
+- The LED image (`d94e3818…90de8`) passed the same five bidirectional MIDI
+  packets with no echo and restored Linux bindings on bus 1 device 12.
+  `picotool` then loaded and verified the isolated empty-hub diagnostic image
+  (`dd6ea717…5004b88cf`), which re-enumerated as bus 1 device 14.
+- With no physical hub attached, two reads reported
+  `midi host=0 rx=0 tx=0 drops=0 invalid=0 hubs=0`. No downstream device has been tested.
+- Regular firmware signals green when a host MIDI interface is mounted. The
+  separate diagnostic signals green after hub configuration. That diagnostic
+  green state was observed with the empty hub. Firmware also implements solid
+  blue when ready with no host MIDI, amber activity on received MIDI, red on
+  initialization failure and magenta for about 200 ms before CDC BOOTSEL in bench
+  mode. Other updated LED states await visual verification.
 
 ## Current design and constraints
 
 - One foreground loop owns both TinyUSB task pumps and the router. TinyUSB 0.21
   provides asynchronous host enumeration and the MIDI host packet API.
 - Build limits are seven USB devices, two hub nodes and eight host MIDI
-  interfaces. The attached hub's internal topology is unverified.
+  interfaces. The attached hub's internal topology remains unverified.
 - The router fans packets to destination cables and excludes the source. Bounded
   output queues can drop packets or abort a SysEx stream under congestion.
-- Prototype host data pins are GPIO14/15. Breakout pin labels, host adapter,
-  protected host 5 V feed, backfeed behavior and standalone power need validation.
+- Prototype host data pins are GPIO14/15. The available hub is bus-powered and
+  its upstream cable ends in USB-C. The breakout is marked V, D−, D+, G. CC is
+  unverified and no protected host supply is fitted.
+- An empty bus-powered USB-C hub was configured through the four-pin breakout
+  with the Pico powered by a standalone 5 V wall charger and the laptop
+  disconnected. Solid green was observed. No CDC capture was made, and no
+  downstream device or externally powered hub was tested. This fixed setup does
+  not establish loaded standalone power or production host-port VBUS behavior.
+- No host-port current limiter is available. Use a suitable VBUS arrangement
+  before testing a downstream MIDI device. The production design still requires
+  a PIO host connection to an externally powered hub.
 - Bench firmware uses shared pid.codes test ID `1209:0001` for private in-house
   testing. It may collide with other test devices and must not be distributed or
   used on devices that are redistributed, sold or manufactured. See the
@@ -62,7 +73,7 @@ firmware, not a release for distribution.
 
 ## Next tasks
 
-1. Identify breakout pinout and confirm host wiring and 5 V power design.
-2. Verify PIO host enumeration with the hub and MIDI devices.
-3. Test downstream routing, reconnect and soak behavior, then standalone power,
-   using [HARDWARE.md](HARDWARE.md).
+1. Implement and verify the built-in mouse activity test.
+2. Test one downstream MIDI device with a suitable VBUS arrangement.
+3. Validate the powered hub, downstream routing, reconnect, soak and loaded
+   standalone power.

@@ -5,6 +5,7 @@
 
 #include "midi_router.h"
 #include "pico/bootrom.h"
+#include "pico/stdlib.h"
 #include "tusb.h"
 
 #define CDC_BENCH_MAX_LINE 10u
@@ -13,6 +14,8 @@
 static char input_line[CDC_BENCH_MAX_LINE];
 static uint8_t input_length;
 static bool discard_line;
+static bool bootsel_pending;
+static uint32_t bootsel_deadline_ms;
 
 static int hex_value(uint8_t character)
 {
@@ -31,7 +34,11 @@ static int hex_value(uint8_t character)
 static bool parse_complete_line(usb_bridge_packet_t *packet)
 {
     if ((input_length == 7u) && (memcmp(input_line, "BOOTSEL", 7u) == 0)) {
-        reset_usb_boot(0, 0);
+        if (!bootsel_pending) {
+            bootsel_pending = true;
+            bootsel_deadline_ms = to_ms_since_boot(get_absolute_time()) + 200u;
+        }
+        return false;
     }
 
     if ((input_length != CDC_BENCH_MAX_LINE) ||
@@ -54,7 +61,7 @@ static bool parse_complete_line(usb_bridge_packet_t *packet)
 
 bool cdc_bench_read_packet(usb_bridge_packet_t *packet)
 {
-    if ((packet == NULL) || !tud_cdc_connected()) {
+    if ((packet == NULL) || bootsel_pending || !tud_cdc_connected()) {
         return false;
     }
 
@@ -68,6 +75,9 @@ bool cdc_bench_read_packet(usb_bridge_packet_t *packet)
             const bool parsed = !discard_line && parse_complete_line(packet);
             input_length = 0;
             discard_line = false;
+            if (bootsel_pending) {
+                return false;
+            }
             if (parsed) {
                 return true;
             }
@@ -115,5 +125,17 @@ void cdc_bench_reset_session(bool clear_cdc_buffers)
     if (clear_cdc_buffers) {
         tud_cdc_read_flush();
         (void)tud_cdc_write_clear();
+    }
+}
+
+bool cdc_bench_bootsel_pending(void)
+{
+    return bootsel_pending;
+}
+
+void cdc_bench_service_reset(uint32_t now_ms)
+{
+    if (bootsel_pending && (int32_t)(now_ms - bootsel_deadline_ms) >= 0) {
+        reset_usb_boot(0, 0);
     }
 }

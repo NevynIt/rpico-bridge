@@ -19,21 +19,19 @@ The target is the Waveshare RP2040-Zero. The board's USB-C receptacle connects t
 
 Use either the hub's power-only port for standalone board power or the laptop for native MIDI + CDC testing. The PIO host connection stays in place in both modes. The first bench target is the existing wall-powered hub with seven USB 3.0 data ports and four power-only ports. Its exact model and internal USB 2.0 topology remain unconfirmed.
 
-The prototype firmware uses GPIO14 (D+) and GPIO15 (D−) for PIO USB. As a reference only, Pico-PIO-USB recommends 22 Ω series resistors on the two data lines. A later adapter would connect GP14 through 22 Ω to D+, GP15 through 22 Ω to D−, and board ground to the host cable's signal ground. The pin pair, resistors and adapter remain unverified on hardware. [Pinned Pico-PIO-USB README](https://github.com/sekigon-gonnoc/Pico-PIO-USB/blob/b186e36bea0f3bcc2ee94ca1fa81e7f71281443a/README.md)
+The prototype firmware uses GPIO14 (D+) and GPIO15 (D−) for PIO USB. Pico-PIO-USB recommends 22 Ω series resistors on the two data lines. The first temporary hub check used GP14 to D+, GP15 to D−, and common ground through jumper wires. This detected one empty, bus-powered USB-C hub. Whether series resistors were fitted for that check was not recorded. [Pinned Pico-PIO-USB README](https://github.com/sekigon-gonnoc/Pico-PIO-USB/blob/b186e36bea0f3bcc2ee94ca1fa81e7f71281443a/README.md)
 
 ## Hub cable and USB-C breakout
 
 The existing hub cable is USB 3.0 Standard-A to Standard-B. A USB-C plug to USB 3 Standard-B cable is a defined cable assembly for connecting a legacy hub to a USB-C host. The bridge would use its USB 2.0 data pair at full speed (12 Mbit/s). A USB-C plug to USB-A socket adapter is defined for direct-attach devices, but USB-IF does not guarantee operation when another standard cable is added. [USB Type-C specification, §2.2 and §3.1.3](https://www.usb.org/sites/default/files/USB%20Type-C%20Spec%20R2.0%20-%20August%202019.pdf)
 
-A USB-C host receptacle needs orientation-independent USB 2.0 D+/D− wiring and Rp terminations on CC1 and CC2 with attach detection. Keep 5 V VBUS off until a sink is detected, then turn it off on detach. Select a known 5 V source and a current-limited switch with reverse-current blocking. Select components after confirming the breakout and 5 V source. [USB Type-C specification, §2.1, §4.4.2 and §4.5.2](https://www.usb.org/sites/default/files/USB%20Type-C%20Spec%20R2.0%20-%20August%202019.pdf)
-
-The reported breakout has four pins, but its labels and circuitry are unknown. Pin count alone does not show whether CC1/CC2 have source terminations or attach control, whether duplicate D pins support both plug orientations, or what protection is present. Before drawing a wiring diagram, inspect the unpowered breakout's label, part number, both sides and available schematic. Map VBUS, ground, D+/D− and CC circuitry without connecting power. If the four pins are only VBUS, ground, D+ and D− and CC handling is absent, the breakout alone is not a USB-C host receptacle. If CC handling cannot be verified, leave the module unpowered and review host options. The native USB-C check needs no breakout.
+A four-wire USB-C breakout labelled V, D−, D+ and G was used with a small USB-C hub's upstream plug. It was sufficient to detect that hub in the tested cable orientation. This does not establish correct attach handling in both orientations or suitability with other Type-C cables. Record the breakout and cable details before using them in a general host port.
 
 ## Host VBUS
 
-The hub's wall supply powers the MIDI devices. A self-powered hub may still draw up to 100 mA from the host's 5 V supply at its upstream connector. The PIO GPIOs carry data only. An adapter power feed must stay separate from the board's native USB-C 5 V rail to prevent the laptop and hub supplies from driving each other. [USB 2.0 specification, §7.2.1.2](https://www.usb.org/document-library/usb-20-specification)
+For the temporary empty-hub check, a 5 V USB wall charger powered the Pico through its native USB-C port. A jumper connected the breakout's V pin to the Pico 5 V pin. The laptop was unplugged, the hub had no external power supply, and no downstream devices were connected. Do not repeat this direct VBUS jumper setup with the laptop attached to native USB-C, since it feeds the hub from the laptop's VBUS through the board. The check does not validate load capacity, fault protection, reverse-current behavior, or powered-hub operation.
 
-The 5 V source, adapter current limit, reverse-current protection and hub upstream VBUS behavior are open decisions. Unpowered inspection cannot establish whether a powered hub sources voltage on its upstream VBUS or how much current the proposed source can provide. Keep the adapter disconnected from the RP2040-Zero until those points are established independently. Then confirm the hub's USB 2.0 topology and VBUS behavior on the bench before finalizing wiring or parts. Do not connect the host-port 5 V rail to the board's native USB-C 5 V rail.
+The production host port still needs a defined 5 V source, current limiting and reverse-current protection. A powered hub can still use upstream VBUS, and the behavior of the planned seven-port hub has not been checked. Keep its power feed isolated from native USB-C VBUS when the computer is attached. Confirm its upstream VBUS and USB 2.0 topology before connecting it. [USB 2.0 specification, §7.2.1.2](https://www.usb.org/document-library/usb-20-specification)
 
 ## Bench acceptance
 
@@ -45,10 +43,18 @@ from the computer and check that `rx` increases while `tx` stays at zero.
 Press **RESET** and verify both interfaces return.
 Record the firmware commit, operating system and results.
 
-Before wiring PIO USB, connect the hub to a computer with its stock cable and
-check its USB 2.0 hub tree. On Linux, `lsusb -t` lists the hub nodes and the
-devices below them. Complete the remaining checks after verifying the adapter
-and its 5 V feed. Record the hub and MIDI devices used.
+The temporary empty bus-powered hub check has passed. The Pico was powered by a
+5 V wall charger through native USB-C with the laptop disconnected. With the
+PIO host VBUS jumper in place, the status LED changed from blue (`hubs=0`) to
+green after TinyUSB completed hub setup. This confirms detection of that one
+hub with the current prototype firmware in that setup. It does not validate a
+field build, downstream MIDI devices, load capacity, or the planned externally
+powered seven-port hub.
+
+Before testing the seven-port hub, connect it to a computer with its stock
+cable and check its USB 2.0 hub tree. On Linux, `lsusb -t` lists the hub nodes
+and devices below them. Verify its upstream VBUS and the protected host power
+arrangement first. Record the hub and MIDI devices used.
 
 1. Connect two or more MIDI devices through the hub and check that CDC reports
    the expected number of MIDI interfaces. Verify the LED turns green.

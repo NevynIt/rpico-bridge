@@ -16,13 +16,14 @@ mounted volume, and audible live routing has not been tested in this session.
   `53c1a2e8ff993ff03e419437b405a889ce36de9d47bc27ca89a588be63859ac9`.
   MODE SENSE reported write protection. WRITE10 returned DATA PROTECT, and a
   free sector was unchanged.
-- CDC `R GET` succeeded while MSC was mounted. The current and previous image
-  reported `host=2`, MicroFreak and APC online, Circuit Tracks offline, and the
-  saved APC control-cable rule `R RULE 4 1 255 3 0 255`.
-- A fresh USB/IP software connection restored all standard device classes.
-  Chromium rendered `CONFIG.HTM` extracted from the drive and exposed Web Serial
-  and Web MIDI APIs. There was no live browser-to-board session, Windows mounted
-  drive test or audible live routing test.
+- An initial CDC `R GET` succeeded while MSC was mounted. The current and
+  previous image reported `host=2`, MicroFreak and APC online, Circuit Tracks
+  offline, and saved APC control-cable rule `R RULE 4 1 255 3 0 255`. Subsequent
+  raw USB/IP claim/rebind retries timed out on CDC GET despite kernel bindings
+  for CDC, MIDI and MSC. Cause is undetermined.
+- Chromium rendered `CONFIG.HTM` extracted from the drive and exposed Web Serial
+  and Web MIDI APIs. Live browser-to-board use, normal desktop reconnection,
+  Windows mounted-drive behavior and audible live routing remain unconfirmed.
 
 ## Build and software verification
 

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:disk": "npm run build && python3 build_disk.py",
     "test": "node protocol.test.mjs"
   },
   "dependencies": {

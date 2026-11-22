@@ -1,0 +1,7 @@
+if(NOT DEFINED RPICO_DOCS_IMAGE OR NOT EXISTS "${RPICO_DOCS_IMAGE}")
+    message(FATAL_ERROR "Missing generated RPico-Bridge documentation image")
+endif()
+file(SIZE "${RPICO_DOCS_IMAGE}" RPICO_DOCS_IMAGE_SIZE)
+if(NOT RPICO_DOCS_IMAGE_SIZE EQUAL 524288)
+    message(FATAL_ERROR "Expected a 512 KiB FAT12 image, got ${RPICO_DOCS_IMAGE_SIZE} bytes")
+endif()

@@ -21,6 +21,13 @@
 #define CFG_TUD_MIDI_RX_BUFSIZE 256
 #define CFG_TUD_MIDI_TX_BUFSIZE 256
 #define CFG_TUD_MIDI_EP_BUFSIZE 64
+#if defined(RPICO_DOCS_DRIVE)
+#define CFG_TUD_MSC 1
+/* One 512-byte sector buffer; USB bulk endpoints themselves remain 64 bytes. */
+#define CFG_TUD_MSC_EP_BUFSIZE 512
+#else
+#define CFG_TUD_MSC 0
+#endif
 
 /* USB MIDI host driver and asynchronous hub enumeration require TinyUSB 0.21.0. */
 #if !defined(RPICO_CDC_BENCH)

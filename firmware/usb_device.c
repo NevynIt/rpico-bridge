@@ -12,6 +12,9 @@ enum {
     ITF_NUM_CDC_DATA,
     ITF_NUM_MIDI,
     ITF_NUM_MIDI_STREAMING,
+#if defined(RPICO_DOCS_DRIVE)
+    ITF_NUM_MSC,
+#endif
     ITF_NUM_TOTAL
 };
 
@@ -20,8 +23,16 @@ enum {
 #define EPNUM_CDC_IN    0x82
 #define EPNUM_MIDI_OUT  0x03
 #define EPNUM_MIDI_IN   0x83
+#if defined(RPICO_DOCS_DRIVE)
+#define EPNUM_MSC_OUT   0x04
+#define EPNUM_MSC_IN    0x84
+#endif
 
+#if defined(RPICO_DOCS_DRIVE)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MIDI_DESC_LEN + TUD_MSC_DESC_LEN)
+#else
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MIDI_DESC_LEN)
+#endif
 
 tusb_desc_device_t const desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
@@ -33,7 +44,11 @@ tusb_desc_device_t const desc_device = {
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor = RPICO_BRIDGE_USB_VID,
     .idProduct = RPICO_BRIDGE_USB_PID,
+#if defined(RPICO_DOCS_DRIVE)
+    .bcdDevice = 0x0101,
+#else
     .bcdDevice = 0x0100,
+#endif
     .iManufacturer = 1,
     .iProduct = 2,
     .iSerialNumber = 3,
@@ -49,7 +64,10 @@ uint8_t const desc_fs_configuration[] = {
                           0, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8,
                        EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
-    TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 5, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, 64)
+    TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 5, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, 64),
+#if defined(RPICO_DOCS_DRIVE)
+    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 6, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64)
+#endif
 };
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
@@ -84,6 +102,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         value = "Diagnostics";
     } else if (index == 5) {
         value = "MIDI";
+#if defined(RPICO_DOCS_DRIVE)
+    } else if (index == 6) {
+        value = "Read-only documents";
+#endif
     } else {
         return NULL;
     }

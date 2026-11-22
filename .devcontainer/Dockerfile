@@ -13,7 +13,7 @@ ENV PICO_SDK_PATH=/opt/pico/pico-sdk \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash build-essential ca-certificates cmake curl file git gh ninja-build \
-        pkg-config python3 python3-venv unzip xz-utils bubblewrap \
+        pkg-config python3 python3-venv nodejs npm unzip xz-utils bubblewrap \
         "gcc-arm-none-eabi=${ARM_GCC_VERSION}" binutils-arm-none-eabi \
         libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
         usbutils libusb-1.0-0-dev gdb-multiarch openocd \

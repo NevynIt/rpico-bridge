@@ -69,7 +69,11 @@ git diff --check
 ```
 
 Run the firmware build in the dev container. The native tests also run on a
-Linux host without a Pico SDK. See `docs/STATE.md` for verification and blockers.
+Linux host without a Pico SDK. The default firmware build includes the
+read-only documentation drive and requires Node.js, Python 3 and configurator
+dependencies. Run `npm ci --prefix configurator` once before the first default
+build. `-DRPICO_DOCS_DRIVE=OFF` omits the drive and those build dependencies.
+See `docs/STATE.md` for verification and blockers.
 
 ## Resume and finish
 

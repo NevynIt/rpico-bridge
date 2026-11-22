@@ -3,7 +3,8 @@
 A USB MIDI 1.0 bridge for the Waveshare RP2040-Zero. The firmware includes
 native MIDI and CDC interfaces, a PIO USB host, ordered routing rules and a
 local configurator. Its ELF descriptors expose CDC control/data and USB Audio
-Control/MIDI Streaming interfaces, with one MIDI cable in each direction.
+Control/MIDI Streaming interfaces, with one MIDI cable in each direction, plus
+a read-only USB documentation drive.
 Earlier firmware passed native USB bench checks. The user reports two-device
 routing on an earlier image. Production hub wiring and power still need
 verification. See
@@ -29,6 +30,42 @@ picotool info build/rpico_bridge.uf2
 ```
 
 The container pins Pico SDK and picotool 2.2.0, TinyUSB 0.21.0, Pico-PIO-USB 0.7.3 and ARM GCC 12.2. Rebuild older images to install TinyUSB 0.21.0. Outside the container, set `PICO_SDK_PATH`, `PICO_TINYUSB_PATH` and `PICO_PIO_USB_PATH` to the corresponding source directories. The project selects `waveshare_rp2040_zero`.
+
+The default firmware build includes the 512 KiB read-only FAT12 drive. The
+Dev Container includes Node.js, npm and Python 3. Before the first build, install
+the configurator dependencies once:
+
+```sh
+cd configurator
+npm ci
+cd ..
+```
+
+The build generates the drive image at `build/docs_drive/rpico-bridge.img` and
+embeds it in the UF2. To omit the drive and its build dependencies, configure
+with `-DRPICO_DOCS_DRIVE=OFF`, for example:
+
+```sh
+cmake -S . -B build-no-docs -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_DOCS_DRIVE=OFF
+```
+
+The drive is named `RPICOBRIDGE` and contains `CONFIG.HTM`, `README.TXT`,
+`HARDWARE.MD` and `LICENSE.TXT`. Open `CONFIG.HTM` directly from the drive in
+desktop Chrome or Edge, then allow Web Serial and Web MIDI access when prompted.
+The bundled configurator runs locally without a network connection or server.
+The drive content is firmware content and is read-only. Save routing and LED
+settings through the configurator's CDC connection; those settings remain in
+littlefs on the board.
+
+The regular UF2 matched the staged SHA-256 and passed picotool flash
+verification. Linux recognized its 512 KiB removable drive alongside CDC ACM
+and USB MIDI. All 1024 drive sectors matched the generated image. The volume
+reported write protection, rejected WRITE10 with DATA PROTECT, and left a free
+sector unchanged. Existing CDC `R GET` succeeded while MSC was mounted. USB/IP
+reconnection restored the standard classes. Chromium rendered `CONFIG.HTM`
+extracted from the volume and exposed Web Serial and Web MIDI APIs. A live
+browser-to-board session, Windows drive mount and audible live routing remain
+untested. See [project state](docs/STATE.md) for hashes and routing status.
 
 ## Native tests
 

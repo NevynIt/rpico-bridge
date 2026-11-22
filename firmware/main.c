@@ -12,6 +12,9 @@ static bridge_t bridge;
 
 static unsigned host_interface_count(void)
 {
+#if defined(RPICO_CDC_BENCH)
+    return 0;
+#else
     unsigned count = 0;
     for (uint8_t index = USB_BRIDGE_HOST_ENDPOINT_FIRST; index < USB_BRIDGE_ENDPOINT_COUNT; ++index) {
         if (bridge.endpoints[index].generation != 0) {
@@ -19,6 +22,7 @@ static unsigned host_interface_count(void)
         }
     }
     return count;
+#endif
 }
 
 static void update_status_led(unsigned host_count, uint32_t *displayed_color)
@@ -76,8 +80,10 @@ int main(void)
     for (;;) {
         bridge_step(&bridge);
 
+#if !defined(RPICO_CDC_BENCH)
         uint8_t discarded_cdc[32];
         usb_bridge_cdc_read(discarded_cdc, sizeof(discarded_cdc));
+#endif
 
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
         if (led_available && (int32_t)(now_ms - next_led_ms) >= 0) {

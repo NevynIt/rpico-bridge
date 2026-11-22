@@ -5,8 +5,12 @@
 #define CFG_TUSB_OS OPT_OS_PICO
 
 #define CFG_TUD_ENABLED 1
+#if defined(RPICO_CDC_BENCH)
+#define CFG_TUH_ENABLED 0
+#else
 #define CFG_TUH_ENABLED 1
 #define CFG_TUH_RPI_PIO_USB 1
+#endif
 
 #define CFG_TUD_ENDPOINT0_SIZE 64
 #define CFG_TUD_CDC 1
@@ -19,12 +23,14 @@
 #define CFG_TUD_MIDI_EP_BUFSIZE 64
 
 /* USB MIDI host driver and asynchronous hub enumeration require TinyUSB 0.21.0. */
+#if !defined(RPICO_CDC_BENCH)
 #define CFG_TUH_HUB 2
 /* Seven hub ports, plus two hub nodes: worst-case 28 of PIO-USB's 32 EP slots. */
 #define CFG_TUH_DEVICE_MAX 7
 #define CFG_TUH_ENUMERATION_BUFSIZE 512
 #define CFG_TUH_MIDI 8
 #define CFG_TUH_MIDI_STREAM_API 0
+#endif
 
 #ifndef CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_SECTION

@@ -1,0 +1,15 @@
+#ifndef RPICO_BRIDGE_CDC_BENCH_H
+#define RPICO_BRIDGE_CDC_BENCH_H
+
+#include <stdbool.h>
+
+#include "usb_bridge.h"
+
+/* Read/write one raw USB-MIDI packet using the CDC bench text protocol. */
+bool cdc_bench_read_packet(usb_bridge_packet_t *packet);
+bool cdc_bench_write_packet(const usb_bridge_packet_t *packet);
+
+/* Reset parser state and optionally discard buffered CDC session data. */
+void cdc_bench_reset_session(bool clear_cdc_buffers);
+
+#endif

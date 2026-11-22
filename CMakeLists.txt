@@ -25,6 +25,8 @@ if(NOT EXISTS "${PICO_TINYUSB_PATH}/src/tusb_option.h")
     message(FATAL_ERROR "Set PICO_TINYUSB_PATH to TinyUSB 0.21.0 or rebuild the dev container")
 endif()
 
+option(RPICO_CDC_BENCH "Use CDC as a native-only MIDI peer for in-house testing" OFF)
+
 if(NOT PICO_PIO_USB_PATH)
     set(PICO_PIO_USB_PATH "$ENV{PICO_PIO_USB_PATH}")
 endif()
@@ -40,6 +42,9 @@ set(bridge_sources
     firmware/usb_device.c
     firmware/usb_host.c
 )
+if(RPICO_CDC_BENCH)
+    list(APPEND bridge_sources firmware/cdc_bench.c)
+endif()
 add_executable(rpico_bridge ${bridge_sources})
 target_compile_features(rpico_bridge PRIVATE c_std_11)
 set_source_files_properties(${bridge_sources} PROPERTIES
@@ -47,9 +52,13 @@ set_source_files_properties(${bridge_sources} PROPERTIES
 )
 target_include_directories(rpico_bridge PRIVATE firmware)
 target_compile_definitions(rpico_bridge PRIVATE PICO_NO_BI_PROGRAM_BUILD_DATE=1)
-target_link_libraries(rpico_bridge PRIVATE
-    pico_stdlib pico_status_led pico_unique_id tinyusb_device tinyusb_host tinyusb_pico_pio_usb
-)
+target_link_libraries(rpico_bridge PRIVATE pico_stdlib pico_status_led pico_unique_id tinyusb_device)
+if(RPICO_CDC_BENCH)
+    target_compile_definitions(rpico_bridge PRIVATE RPICO_CDC_BENCH=1)
+    target_link_libraries(rpico_bridge PRIVATE pico_bootrom)
+else()
+    target_link_libraries(rpico_bridge PRIVATE tinyusb_host tinyusb_pico_pio_usb)
+endif()
 pico_enable_stdio_uart(rpico_bridge 0)
 pico_enable_stdio_usb(rpico_bridge 0)
 pico_set_program_name(rpico_bridge "rpico-bridge")

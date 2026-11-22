@@ -36,9 +36,47 @@ cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 ```
 
+## CDC-only bench mode
+
+This opt-in bench build routes between the native USB-MIDI peer and a virtual
+MIDI peer on CDC through the same router. It runs without a physical PIO host
+or hub, keeps the existing device VID/PID, and defaults to OFF.
+
+Build it in a separate directory:
+
+```sh
+cmake -S . -B build-cdc-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DRPICO_CDC_BENCH=ON
+cmake --build build-cdc-bench
+```
+
+The owner used physical BOOT/RESET once to enter BOOTSEL and install the bench
+UF2. Flash verification succeeded, and the board re-enumerated as `1209:0001`
+with the same product. The board currently runs this bench UF2.
+
+After asserting CDC DTR, write packets as `M <8 hex digits>\n` to inject them
+from the CDC peer. Native USB-MIDI packets routed to CDC are printed in the same
+format. Each line carries one raw four-byte USB-MIDI event packet on cable zero.
+Packet lines can interleave with `midi ...` diagnostics. For example,
+`M 09903C40` sends a Note On from CDC to native USB-MIDI.
+
+Run the bench harness with an accessible raw USB device node. Get the bus and
+device numbers from `lsusb` and make sure the current user has permission to
+read and write the node.
+
+```sh
+python3 tests/cdc_bench.py --run --bus <BUS> --address <DEVICE>
+```
+
+The run passed five packets in each direction, including Note On/Off, SysEx
+start/end and realtime clock. Neither source received an echo. The harness
+restored Linux driver bindings after the run. No physical PIO host was active.
+In bench mode, `BOOTSEL\n` over CDC requests bootloader entry. This command is
+compiled in the bench build, but software re-entry has not been separately
+tested.
+
 ## Flash
 
-Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy `build/rpico_bridge.uf2` to the `RPI-RP2` drive. The drive ejects and the board restarts. For the first hardware check, connect only the board to a computer over native USB. Expect the LED to be blue and the CDC diagnostic to report `host=0`; the RX counter should increase when MIDI reaches the bridge. These physical indications await bench confirmation. The PIO host adapter and powered-hub operation are not yet verified.
+Hold **BOOT** and tap **RESET**, then release **BOOT**. Copy the UF2 from the selected build directory to the `RPI-RP2` drive. Use `build/rpico_bridge.uf2` for the regular build or `build-cdc-bench/rpico_bridge.uf2` for CDC bench mode. The drive ejects and the board restarts. A native USB-only bench confirmed a blue LED and CDC diagnostics reporting `host=0`. Sending Note On and Note Off to native MIDI OUT increased the RX count from 0 to 2. The PIO host adapter and powered-hub operation remain unverified.
 
 Bench firmware uses the shared pid.codes test identity `1209:0001`. Anyone may use it in their own private, in-house tests, but it may collide with other test devices. Do not distribute this firmware or use this ID on devices that will be redistributed, sold or manufactured; see the [pid.codes test PID terms](https://pid.codes/1209/0001/). See [project state](docs/STATE.md) for production identity status.
 

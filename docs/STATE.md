@@ -1,11 +1,9 @@
 # Project state
 
-**Prototype status — native USB runtime remains unverified.** Native routing
-checks and compiled firmware evidence are recorded below. BOOTSEL enumeration
-was observed through WSL 2 USB/IP, but application-mode USB enumeration and
-physical MIDI+CDC operation were not observed. Host adapter wiring and full hub
-bench operation also remain unverified. This is development firmware, not a
-release for distribution.
+**Prototype status — flash verified, application runtime unverified.** Native
+routing checks and compiled firmware evidence are recorded below. Application
+enumeration, MIDI+CDC operation, host adapter wiring and full hub bench operation
+remain unverified. This is development firmware, not a release for distribution.
 
 ## Verification evidence
 
@@ -17,14 +15,15 @@ release for distribution.
   and data, plus USB Audio Control and MIDI Streaming. MIDI Streaming advertises
   one cable in each direction. The rebuilt image's descriptors use VID/PID
   `1209:0001`.
-- Via USB/IP, WSL 2 sysfs enumerated the RP2040 as `2e8a:0003` (`RP2 Boot`) in
-  BOOTSEL mode. The Dev Container has neither `/dev/bus/usb` nor an `RPI-RP2`
-  mount. Escalated `picotool` could not open the device.
-- During a 60-second observation, the USB specialist did not see application
-  identity `1209:0001` or its interfaces. The BOOTSEL observation confirms only
-  bootloader enumeration. Compiled descriptor checks do not establish runtime
-  application enumeration. Application-mode enumeration and native MIDI+CDC
-  operation remain unverified.
+- WSL 2 USB/IP and sysfs previously enumerated BOOTSEL as `2e8a:0003` (`RP2
+  Boot`). Approved `picotool` later identified RP2040 revision B2, loaded the
+  bench UF2 (`e4cfb88f15362c98bb20d90decc4d8a23b81702497a3a49e7bba3570f78dc045`),
+  verified flash OK and requested an application reboot.
+- BOOTSEL disconnected after reboot. Application PID `1209:0001` did not appear
+  in sysfs or approved `lsusb`. CDC and ALSA device nodes were absent.
+  Application enumeration and runtime remain pending. The owner was asked to
+  look for the new Windows device, reattach or remap it, and report any LED
+  status. The verified result remains successful flash verification only.
 
 ## Current design and constraints
 

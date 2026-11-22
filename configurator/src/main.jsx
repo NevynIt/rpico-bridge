@@ -27,6 +27,13 @@ const consoleLineKind = value => {
   if (/^M [0-9A-Fa-f]{8}$/.test(text)) return 'midi';
   return 'normal';
 };
+function previewColor(hex, gain) {
+  const channels = [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+  const brightest = Math.max(...channels);
+  if (brightest === 0) return '#000000';
+  const scale = Math.min(gain, 255 / brightest);
+  return `#${channels.map(value => Math.round(value * scale).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
 
 function App() {
   const [serial, setSerial] = useState('Disconnected');
@@ -52,6 +59,7 @@ function App() {
   const [ledSaved, setLedSaved] = useState(null);
   const [ledSupported, setLedSupported] = useState(false);
   const [ledBusy, setLedBusy] = useState(false);
+  const [ledPreviewBoost, setLedPreviewBoost] = useState(16);
   const [ledNote, setLedNote] = useState('Connect the board to read its LED settings.');
   const bridge = useRef(null);
   const ledReadInFlight = useRef(false);
@@ -405,11 +413,12 @@ function App() {
         h('div', { className: 'panel-head' }, h('div', null, h('h2', null, 'Status LED')), badge(ledBusy ? 'Working' : ledSupported ? (ledDirty ? 'Unsaved changes' : 'Saved on board') : 'Not loaded', ledDirty ? '' : 'count')),
         h('p', { className: 'muted' }, 'Edit the status colors and activity timings, then save once. The board may restart after saving.'),
         h('p', { className: 'led-note', role: 'status', 'aria-live': 'polite', 'data-testid': 'led-note' }, ledNote),
+        h('label', { className: 'led-preview-boost' }, 'Preview brightness boost (visual only)', h('input', { type: 'range', min: 1, max: 64, step: 1, value: ledPreviewBoost, onChange: e => setLedPreviewBoost(Number(e.target.value)), 'data-testid': 'led-preview-boost' }), h('output', { 'data-testid': 'led-preview-boost-value' }, `${ledPreviewBoost}×`)),
         h('div', { className: 'led-timings' },
           h('label', null, 'MIDI pulse (ms)', h('input', { type: 'number', min: 2, max: 100, step: 1, value: ledSettings.pulse_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, pulse_ms: Number(e.target.value) })) })),
           h('label', null, 'Mouse phase (ms)', h('input', { type: 'number', min: 10, max: 1000, step: 1, value: ledSettings.phase_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, phase_ms: Number(e.target.value) })) })),
           h('label', null, 'Mouse hold (ms)', h('input', { type: 'number', min: 10, max: 5000, step: 1, value: ledSettings.hold_ms, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, hold_ms: Number(e.target.value) })) }))),
-        h('div', { className: 'led-colors' }, ...LED_COLOR_FIELDS.map(([field, label]) => h('label', { key: field }, label, h('span', { className: 'led-swatch', 'data-testid': `led-swatch-${field}`, style: { backgroundColor: `#${ledSettings[field]}` }, 'aria-hidden': 'true' }), h('input', { type: 'color', 'data-testid': `led-color-${field}`, value: `#${ledSettings[field]}`, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, [field]: e.target.value.slice(1).toUpperCase() })) }), h('code', { 'data-testid': `led-hex-${field}` }, `#${ledSettings[field]}`)))),
+        h('div', { className: 'led-colors' }, ...LED_COLOR_FIELDS.map(([field, label]) => h('label', { key: field }, label, h('span', { className: 'led-swatch', 'data-testid': `led-swatch-${field}`, style: { backgroundColor: previewColor(ledSettings[field], ledPreviewBoost) }, 'aria-hidden': 'true' }), h('input', { type: 'color', 'data-testid': `led-color-${field}`, value: `#${ledSettings[field]}`, disabled: !ledSupported || ledBusy, onChange: e => setLedSettings(s => ({ ...s, [field]: e.target.value.slice(1).toUpperCase() })) }), h('code', { 'data-testid': `led-hex-${field}` }, `#${ledSettings[field]}`)))),
         h('div', { className: 'led-actions' }, h('button', { className: 'secondary', onClick: () => loadLedSettings(bridge.current), disabled: serial !== 'Connected' || ledBusy || working, 'data-testid': 'read-led-settings' }, ledBusy ? 'Reading…' : 'Read from board'), h('button', { className: 'primary', onClick: saveLedSettings, disabled: serial !== 'Connected' || !ledSupported || ledBusy || working || !ledDirty }, ledBusy ? 'Please wait…' : 'Save LED settings'))),
     ) : h('section', { className: 'panel docs-view', 'data-testid': 'docs-view' },
       ...DOCS_PAGES.map(doc => h('article', { className: 'docs-page', key: doc.id },

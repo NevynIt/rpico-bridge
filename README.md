@@ -136,6 +136,10 @@ The panel automatically reads the saved palette when the board connects. Use
 **Read from board** to reload it later. A successful read replaces pending LED
 edits in the panel without saving them.
 
+**Brightness boost** scales preview swatches from 1× to 64× and starts at 16×.
+It affects the preview only. Color pickers show the exact RGB values saved to
+the Pico. Use the slider to make dim colors easier to distinguish.
+
 On the CDC console, `help led` lists LED commands and `led` prints current or
 staged settings. Stage changes with `led color ready|hub|midi|mouse|traffic|bootsel|error RRGGBB`,
 `led timing MIDI_PULSE_MS MOUSE_PHASE_MS MOUSE_HOLD_MS` or `led defaults`. Use

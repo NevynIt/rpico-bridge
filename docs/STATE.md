@@ -1,45 +1,45 @@
 # Project state
 
-**Built-in documentation view.** The latest firmware and 512 KiB FAT12 drive
-are flashed and verified. CONFIG.HTM contains the embedded guide; README.TXT
-points to it and LICENSE.TXT carries the project license. CDC retained the
-catalog and APC exclusion. IDs 3–5 were offline in this check. The user reports
-the earlier browser controller worked. Direct browser connection to this build
-and PIO routing were not tested.
+**Built-in documentation view.** The boost-enabled firmware and 512 KiB FAT12
+drive are flashed and verified. CONFIG.HTM contains the embedded guide.
+README.TXT points to it and LICENSE.TXT carries the project license. CDC checks
+confirmed that saved LED settings and routing policy are unchanged. This check
+covered embedded-drive content and serial persistence. It did not exercise live
+browser connection or optical color calibration.
 
 ## Physical verification
 
 - UF2 SHA-256
-  `6f30d1bfc011fcfd40ea26eacc95b84212b24cc84d0ff098b4f8de012a9b0a94`
-  matched an independent staged build and passed picotool flash verification.
+  `4bc95c5c844da5e42ef6f5e329f916fb53fb4079594d80e2bd76513f70c650af`
+  matched the staged build exactly and passed picotool flash verification.
 - Direct MSC read of all 1024 sectors matched image SHA-256
-  `2874a5b409776b7a824ec3459296c7f6b51de734a0759e0c75036b88c5b1f775`.
-  MODE SENSE reported read-only.
-- CDC GET returned the same seven RGB values and timings twice. The catalog and
-  APC exclusion `R RULE 4 1 255 3 0 255` remained unchanged. Device IDs 3–5
-  were offline in this check.
-- Executable firmware bytes match the previous build outside the documentation
-  image. No PIO routing test was run for this update.
-- Local Chromium with mocked Web Serial verified automatic LED load, manual
-  reload without writes, failed initial read/retry and exact values. Direct
-  browser-to-Pico and Windows drive tests remain unverified.
+  `da2ca83ca373a27dc4ad094ba2d9a7b61d4a942ad5cf8a8271d0694bf4412532`.
+  MODE SENSE reported write protection.
+- CDC before and after flash returned identical saved LED timings/palette and
+  routing policy, including APC exclusion `R RULE 4 1 255 3 0 255`.
+- Executable firmware bytes match the previous image outside the bundled drive.
+  This check covered the documentation drive, not PIO routing.
+- Local Chromium with mocked CDC verified 16× default boost, 1× identity,
+  capped gain, black, no slider writes, raw RGB payload at 64×, and load/retry.
+  The browser test exercised mocked CDC rather than a live Pico connection.
+  Optical color calibration remains outside this check.
 
 ## Build and software verification
 
 - Firmware and drive tests pass. Normal, bench and `RPICO_DOCS_DRIVE=OFF`
-  builds succeeded; OFF was bit-identical to the prior drive-free UF2.
+  builds succeeded. OFF was bit-identical to the prior drive-free UF2.
 - The fixed FAT12 image is 512 KiB, uses `RPICOBRIDGE`, and contains
   CONFIG.HTM, README.TXT and LICENSE.TXT. Its full sector read matched the
-  generated image; earlier image fsck/mtools checks passed.
+  generated image. Earlier image fsck/mtools checks passed.
 - Python drive tests pass 3/3, native CTest 2/2 and 10 protocol tests pass.
-  Keyboard and console interactions have stub coverage; detailed harness and
+  Keyboard and console interactions have stub coverage. Detailed harness and
   physical key use remain pending.
 - The default build requires Node.js, Python 3 and one-time `npm ci
   --prefix configurator`. It generates `build/docs_drive/rpico-bridge.img` and
   embeds it in UF2. `-DRPICO_DOCS_DRIVE=OFF` omits the image and build dependency.
 - Open CONFIG.HTM from the mounted volume in desktop Chrome or Edge. Allow Web
   Serial and Web MIDI access. The app runs offline without a server. Save route
-  and LED settings through CDC; the drive is read-only, not settings storage.
+  and LED settings through CDC. The drive is read-only, not settings storage.
 
 ## Next checks
 
@@ -51,7 +51,7 @@ and PIO routing were not tested.
 ## Constraints
 
 - Ordered routing preserves channels and selects destination cables. Fallback
-  is all or drop; global action 3 excludes one remembered cable both ways.
+  is all or drop. Global action 3 excludes one remembered cable both ways.
 - Host wiring uses GPIO14/15 and a four-pin breakout labeled V, D−, D+ and G.
   Pin mapping, CC behavior, production host VBUS, protection and loaded power
   remain subject to hardware verification. The board announces 100 mA.
